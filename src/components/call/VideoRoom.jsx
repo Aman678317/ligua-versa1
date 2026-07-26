@@ -6,6 +6,7 @@ import {
 import DualCaptionsOverlay from './DualCaptionsOverlay';
 import HostControlsModal from './HostControlsModal';
 import InCallChat from './InCallChat';
+import PermissionBanner from './PermissionBanner';
 import { EmojiReactionsOverlay, PollsModal } from './PollsAndReactions';
 import SpeechCanvas3D from '../visuals/SpeechCanvas3D';
 import VoiceParticles from '../canvas/VoiceParticles';
@@ -26,10 +27,10 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isBlurBackground, setIsBlurBackground] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
-  const [layoutMode, setLayoutMode] = useState('gallery'); // 'gallery' | 'speaker'
+  const [layoutMode, setLayoutMode] = useState('gallery');
 
   // Permission & Stream States
-  const [permissionError, setPermissionError] = useState(null);
+  const [permissionErrorType, setPermissionErrorType] = useState(null); // 'NotAllowedError' | 'NotFoundError' | 'NotReadableError' | null
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState(new Map()); // socketId -> MediaStream
   const [participants, setParticipants] = useState([]);
@@ -69,36 +70,50 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const audioMixerRef = useRef(null);
   const captionSyncRef = useRef(new CaptionSynchronizer(2500));
 
-  // Full Join Link calculation
   const shareableJoinUrl = `${window.location.origin}/meet/${roomCode}`;
 
-  // 1. REAL CAMERA & MIC CAPTURE (getUserMedia)
-  useEffect(() => {
-    let activeStream = null;
+  // 1. MEDIA PERMISSIONS & getUserMedia WITH PARTIAL GRANT FALLBACK
+  const requestMediaPermissions = async () => {
+    try {
+      // First attempt full Video + Audio grant
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setLocalStream(stream);
+      setPermissionErrorType(null);
 
-    navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        activeStream = stream;
-        setLocalStream(stream);
-        setPermissionError(null);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
+      const mixer = new AudioMixer();
+      audioMixerRef.current = mixer;
+      mixer.initialize(stream);
+    } catch (err) {
+      console.warn('[getUserMedia Full Media Grant Failed]', err);
 
-        // Initialize Audio Mixer for frequency visualization
+      // Attempt fallback to Audio-only if video failed (partial grant path)
+      try {
+        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        setLocalStream(audioOnlyStream);
+        setIsVideoOn(false);
+        setPermissionErrorType(null);
+
         const mixer = new AudioMixer();
         audioMixerRef.current = mixer;
-        mixer.initialize(stream);
-      })
-      .catch((err) => {
-        console.warn('[Camera/Mic Access Denied]', err);
-        setPermissionError('Camera or Microphone access was denied by browser settings. Please allow permissions to join video call.');
-      });
+        mixer.initialize(audioOnlyStream);
+      } catch (audioErr) {
+        // Differentiate exact DOMException error type
+        const errName = audioErr.name || err.name || 'NotAllowedError';
+        setPermissionErrorType(errName);
+      }
+    }
+  };
+
+  useEffect(() => {
+    requestMediaPermissions();
 
     return () => {
-      if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
       }
       if (audioMixerRef.current) {
         audioMixerRef.current.stop();
@@ -108,7 +123,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   // 2. SOCKET ROOM JOIN & MULTI-PEER WEBRTC
   useEffect(() => {
-    // Initialize WebRTC Manager
     const webrtc = new WebRTCManager(
       socket,
       localStream,
@@ -129,7 +143,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     );
     webrtcManagerRef.current = webrtc;
 
-    // Initialize Real Microphone Speech Translation Service
     const speechService = new SpeechTranslationService(
       socket,
       selectedLanguage,
@@ -139,7 +152,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     speechServiceRef.current = speechService;
     speechService.start();
 
-    // Join WebSocket Room
     socket.emit('join-room', {
       roomCode,
       user: {
@@ -151,7 +163,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       }
     });
 
-    // When existing peers detect new peer -> initiate WebRTC Offer
     socket.on('user-joined', ({ socketId }) => {
       webrtc.initiateOffer(socketId);
     });
@@ -232,7 +243,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const toggleMute = () => {
     if (localStream) {
       localStream.getAudioTracks().forEach(track => {
-        track.enabled = isMuted; // Toggle track state
+        track.enabled = isMuted;
       });
     }
     setIsMuted(!isMuted);
@@ -247,7 +258,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     setIsVideoOn(!isVideoOn);
   };
 
-  // Copy & WhatsApp Share Handlers
   const handleCopyLink = () => {
     navigator.clipboard.writeText(shareableJoinUrl);
     setCopiedLink(true);
@@ -261,6 +271,25 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   const triggerEmojiReaction = (emoji) => {
     socket.emit('send-reaction', { emoji });
+  };
+
+  // Optimistic Chat Handler
+  const handleSendChatMessage = ({ text, originalLang, file }) => {
+    const optimisticMsg = {
+      id: `opt-${Date.now()}`,
+      senderId: socket.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      text,
+      translatedText: text,
+      originalLang: originalLang || selectedLanguage,
+      targetLang: selectedLanguage,
+      file,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setChatMessages((prev) => [...prev, optimisticMsg]);
+    socket.emit('send-chat-message', { text, originalLang: selectedLanguage, file });
   };
 
   return (
@@ -294,7 +323,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         {/* Top Right Share & Layout Bar */}
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
           
-          {/* Copy Link Button */}
           <button
             onClick={handleCopyLink}
             className="px-3 py-1.5 rounded-xl bg-[#0A0E1A]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1.5 transition-all"
@@ -304,7 +332,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
           </button>
 
-          {/* Share WhatsApp Button */}
           <button
             onClick={handleWhatsAppShare}
             className="p-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 transition-all"
@@ -313,7 +340,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             <Share2 className="w-4 h-4" />
           </button>
 
-          {/* Layout Switcher */}
           <div className="flex items-center gap-1 bg-[#0A0E1A]/80 backdrop-blur-md p-1 rounded-xl border border-white/10">
             <button
               onClick={() => setLayoutMode('gallery')}
@@ -334,22 +360,11 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           </div>
         </div>
 
-        {/* Permission Error Banner */}
-        {permissionError && (
-          <div className="mx-6 mt-16 z-20 p-4 bg-rose-950/90 border border-rose-500/50 rounded-2xl flex items-center gap-3 text-rose-200 text-xs font-medium shadow-2xl">
-            <CameraOff className="w-5 h-5 text-rose-400 shrink-0" />
-            <div className="flex-1">
-              <p className="font-bold text-sm text-white">Camera & Microphone Access Blocked</p>
-              <p>{permissionError}</p>
-            </div>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shrink-0"
-            >
-              Retry Permission
-            </button>
-          </div>
-        )}
+        {/* Explicit Permission Banner */}
+        <PermissionBanner
+          errorType={permissionErrorType}
+          onRetry={requestMediaPermissions}
+        />
 
         {/* Video Grid */}
         <div className="flex-1 p-4 md:p-6 flex items-center justify-center">
@@ -379,7 +394,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                 </div>
               )}
 
-              {/* Local Participant Name & Language Badge */}
               <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
                 <span>{currentUser.name} (You)</span>
                 <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
@@ -396,7 +410,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
               )}
             </div>
 
-            {/* REAL REMOTE WEBRTC PARTICIPANTS (ONTRACK STREAMS) */}
+            {/* REAL REMOTE WEBRTC PARTICIPANTS */}
             {Array.from(remoteStreams.entries()).map(([remoteSocketId, stream]) => {
               const peerInfo = participants.find(p => p.socketId === remoteSocketId) || { name: 'Peer', spokenLanguage: 'ja' };
 
@@ -416,7 +430,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                     className="w-full h-full object-cover"
                   />
 
-                  {/* Remote Peer Name & Language Badge */}
                   <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
                     <span>{peerInfo.name}</span>
                     <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-mono uppercase font-bold">
@@ -444,7 +457,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         {/* Bottom Control Bar */}
         <div className="h-20 bg-[#0A0E1A]/95 border-t border-white/10 px-4 sm:px-8 flex items-center justify-between z-30 shadow-2xl">
           
-          {/* Audio / Video Toggles */}
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={toggleMute}
@@ -483,9 +495,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             </button>
           </div>
 
-          {/* Center Call Features (Captions, Reactions, Polls) */}
           <div className="flex items-center gap-2 sm:gap-3">
-            
             <button
               onClick={() => setShowCaptions(!showCaptions)}
               className={`px-3.5 py-2.5 rounded-2xl font-semibold text-xs flex items-center gap-2 transition-all border ${
@@ -498,7 +508,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
               <span className="hidden sm:inline">Dual Captions</span>
             </button>
 
-            {/* Quick Emoji Reaction Buttons */}
             <div className="hidden md:flex items-center gap-1 bg-slate-900 p-1.5 rounded-2xl border border-white/10">
               {['👏', '❤️', '🎉', '👍', '💡'].map((emoji) => (
                 <button
@@ -520,9 +529,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             </button>
           </div>
 
-          {/* Right Action Group (Host Controls, Chat, Leave Call) */}
           <div className="flex items-center gap-2 sm:gap-3">
-            
             <button
               onClick={() => setIsHostControlsOpen(true)}
               className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-[#00E5C7] border border-[#00E5C7]/30 transition-all shadow-md"
@@ -561,19 +568,15 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
       </div>
 
-      {/* In-Call Chat Drawer */}
       <InCallChat
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         messages={chatMessages}
-        onSendMessage={({ text, originalLang, file }) => {
-          socket.emit('send-chat-message', { text, originalLang, file });
-        }}
+        onSendMessage={handleSendChatMessage}
         selectedLanguage={selectedLanguage}
         languages={languages}
       />
 
-      {/* Host Controls Modal */}
       <HostControlsModal
         isOpen={isHostControlsOpen}
         onClose={() => setIsHostControlsOpen(false)}
@@ -589,7 +592,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         onRemoveParticipant={(targetSocketId) => socket.emit('host-remove-participant', { targetSocketId })}
       />
 
-      {/* Polls Modal */}
       <PollsModal
         isOpen={isPollsOpen}
         onClose={() => setIsPollsOpen(false)}

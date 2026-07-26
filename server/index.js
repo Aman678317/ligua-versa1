@@ -223,22 +223,58 @@ io.on('connection', (socket) => {
     io.to(currentRoomCode).emit('live-caption-chunk', translationResult);
   });
 
-  socket.on('send-chat-message', async ({ text, originalLang }) => {
-    if (!currentRoomCode) return;
+  // REAL CHAT AUTO-TRANSLATION PIPELINE
+  socket.on('send-chat-message', async ({ text, originalLang, file }) => {
+    if (!currentRoomCode || !text.trim()) return;
     const room = getRoom(currentRoomCode);
+    const messageId = `msg-${Date.now()}`;
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const messageObj = {
-      id: `msg-${Date.now()}`,
+    // Translate for each participant based on their target language preference
+    for (const [participantSocketId, participant] of room.participants.entries()) {
+      let translatedText = text;
+      const targetLang = participant.spokenLanguage || participant.targetLanguage || 'en';
+
+      try {
+        if (targetLang !== (originalLang || 'en')) {
+          const transResult = await processSpeechTranslation({
+            speakerId: socket.id,
+            speakerName: currentUser ? currentUser.name : 'Participant',
+            text,
+            sourceLang: originalLang || 'en',
+            targetLang
+          });
+          translatedText = transResult.translatedText;
+        }
+      } catch (err) {
+        console.warn('[Chat Translation Fallback]', err);
+        translatedText = text; // Delivered untranslated if translation fails
+      }
+
+      const recipientMsgObj = {
+        id: messageId,
+        senderId: socket.id,
+        senderName: currentUser ? currentUser.name : 'Participant',
+        senderAvatar: currentUser ? currentUser.avatar : null,
+        text,
+        translatedText,
+        originalLang: originalLang || 'en',
+        targetLang,
+        file,
+        timestamp
+      };
+
+      io.to(participantSocketId).emit('new-chat-message', recipientMsgObj);
+    }
+
+    room.messages.push({
+      id: messageId,
       senderId: socket.id,
       senderName: currentUser ? currentUser.name : 'Participant',
-      senderAvatar: currentUser ? currentUser.avatar : null,
       text,
       originalLang: originalLang || 'en',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    room.messages.push(messageObj);
-    io.to(currentRoomCode).emit('new-chat-message', messageObj);
+      timestamp
+    });
   });
 
   socket.on('send-reaction', ({ emoji }) => {
