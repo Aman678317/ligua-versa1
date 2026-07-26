@@ -4,11 +4,15 @@ let socket = null;
 
 export const getSocket = () => {
   if (!socket) {
-    // In dev mode, connects to Vite proxy or localhost:3001
-    const URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : '/';
+    const URL = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'http://localhost:3001'
+      : 'https://ligua-versa1.onrender.com';
+
     socket = io(URL, {
       autoConnect: true,
-      transports: ['websocket', 'polling']
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 5,
+      timeout: 10000
     });
   }
   return socket;
