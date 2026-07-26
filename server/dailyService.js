@@ -1,6 +1,4 @@
 // Daily.co Managed Video Infrastructure REST API Client
-import fetch from 'node-fetch';
-
 const DAILY_API_URL = 'https://api.daily.co/v1/rooms';
 
 export async function createDailyRoom(roomCode) {
@@ -28,7 +26,7 @@ export async function createDailyRoom(roomCode) {
         name: roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : undefined,
         properties: {
           exp,
-          enable_chat: false, // We use LinguaVersa's custom translated chat
+          enable_chat: false,
           enable_screenshare: true,
           start_video_off: false,
           start_audio_off: false
