@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import DailyIframe from '@daily-co/daily-js';
 import { 
   Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, PhoneOff, 
   MessageSquare, Shield, BarChart2, Sparkles, Users, LayoutGrid, User, Copy, Check, Share2, CameraOff, AlertCircle
@@ -14,14 +15,13 @@ import { ChatBotOrb } from '../canvas/ChatBotOrb';
 import AIStatusIndicator from './AIStatusIndicator';
 import { AudioMixer } from '../../utils/AudioMixer';
 import { CaptionSynchronizer } from '../../utils/CaptionSynchronizer';
-import { WebRTCManager } from '../../services/webrtc';
 import { SpeechTranslationService } from '../../services/speechTranslation';
 import { getSocket } from '../../services/socket';
 
 export default function VideoRoom({ roomCode, currentUser, selectedLanguage, setSelectedLanguage, languages, userSettings, onLeaveCall }) {
   const socket = getSocket();
 
-  // Call & Media States
+  // Media & Control States
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -29,13 +29,9 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [showCaptions, setShowCaptions] = useState(true);
   const [layoutMode, setLayoutMode] = useState('gallery');
 
-  // Permission & Stream States
-  const [permissionErrorType, setPermissionErrorType] = useState(null);
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStreams, setRemoteStreams] = useState(new Map());
-  const [participants, setParticipants] = useState([]);
-
-  // Copy & Share Link State
+  // Daily Participants & Stream Tracks State
+  const [dailyParticipants, setDailyParticipants] = useState([]);
+  const [dailyRoomUrl, setDailyRoomUrl] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Drawers & Modals
@@ -64,97 +60,80 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     metrics: { sttLatencyMs: 120, nmtLatencyMs: 210, ttsLatencyMs: 260, totalLatencyMs: 590 }
   });
 
-  const localVideoRef = useRef(null);
-  const webrtcManagerRef = useRef(null);
+  const dailyCallRef = useRef(null);
   const speechServiceRef = useRef(null);
   const audioMixerRef = useRef(null);
   const captionSyncRef = useRef(new CaptionSynchronizer(2500));
 
   const shareableJoinUrl = `${window.location.origin}/meet/${roomCode}`;
 
-  // 1. MEDIA PERMISSIONS & getUserMedia
-  const requestMediaPermissions = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
-      setPermissionErrorType(null);
-
-      const mixer = new AudioMixer();
-      audioMixerRef.current = mixer;
-      mixer.initialize(stream);
-    } catch (err) {
-      console.warn('[getUserMedia Full Media Grant Failed]', err);
-
-      try {
-        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-        setLocalStream(audioOnlyStream);
-        setIsVideoOn(false);
-        setPermissionErrorType(null);
-
-        const mixer = new AudioMixer();
-        audioMixerRef.current = mixer;
-        mixer.initialize(audioOnlyStream);
-      } catch (audioErr) {
-        const errName = audioErr.name || err.name || 'NotAllowedError';
-        setPermissionErrorType(errName);
-      }
-    }
-  };
-
+  // 1. FETCH DAILY ROOM URL & INITIALIZE DAILY CALL OBJECT
   useEffect(() => {
-    requestMediaPermissions();
+    let callObj = null;
+
+    const initDailyCall = async () => {
+      try {
+        const res = await fetch('/api/daily/room', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomCode })
+        });
+        const data = await res.json();
+        const roomUrl = data.url || `https://linguaversa.daily.co/lingua-${roomCode}`;
+        setDailyRoomUrl(roomUrl);
+
+        callObj = DailyIframe.createCallObject({
+          subscribeToTracksAutomatically: true,
+        });
+        dailyCallRef.current = callObj;
+
+        // Daily Call Event Handlers
+        const updateParticipants = () => {
+          if (!callObj) return;
+          const participantsMap = callObj.participants();
+          const list = Object.values(participantsMap);
+          setDailyParticipants(list);
+        };
+
+        callObj.on('joined-meeting', updateParticipants);
+        callObj.on('participant-joined', updateParticipants);
+        callObj.on('participant-updated', updateParticipants);
+        callObj.on('participant-left', updateParticipants);
+
+        await callObj.join({
+          url: roomUrl,
+          userName: currentUser.name || 'Participant'
+        });
+
+        console.log('[Daily.co] Joined Daily room successfully:', roomUrl);
+
+        // Start Audio Mixer on local microphone stream
+        const localStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        if (localStream) {
+          const mixer = new AudioMixer();
+          audioMixerRef.current = mixer;
+          mixer.initialize(localStream);
+        }
+      } catch (err) {
+        console.warn('[Daily.co Join Exception]', err);
+      }
+    };
+
+    initDailyCall();
 
     return () => {
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+      if (dailyCallRef.current) {
+        dailyCallRef.current.leave().catch(() => {});
+        dailyCallRef.current.destroy().catch(() => {});
       }
       if (audioMixerRef.current) {
         audioMixerRef.current.stop();
       }
     };
-  }, []);
+  }, [roomCode]);
 
-  // 2. DEDICATED STREAM ATTACHMENT EFFECT FOR LOCAL SELF-VIEW VIDEO
+  // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
   useEffect(() => {
-    if (localVideoRef.current && localStream && isVideoOn) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch(err => console.warn('[Local Video Play Exception]', err));
-      console.log('[LinguaVersa Media] Local stream successfully attached to video element:', localStream.id);
-    }
-  }, [localStream, isVideoOn]);
-
-  // Callback Ref to handle video node mount immediately
-  const handleLocalVideoRef = (el) => {
-    localVideoRef.current = el;
-    if (el && localStream && isVideoOn && el.srcObject !== localStream) {
-      el.srcObject = localStream;
-      el.play().catch(() => {});
-      console.log('[LinguaVersa Media] Local stream attached via ref callback:', localStream.id);
-    }
-  };
-
-  // 3. SOCKET ROOM JOIN & MULTI-PEER WEBRTC
-  useEffect(() => {
-    const webrtc = new WebRTCManager(
-      socket,
-      localStream,
-      (remoteSocketId, remoteStream) => {
-        setRemoteStreams(prev => {
-          const next = new Map(prev);
-          next.set(remoteSocketId, remoteStream);
-          return next;
-        });
-      },
-      (remoteSocketId) => {
-        setRemoteStreams(prev => {
-          const next = new Map(prev);
-          next.delete(remoteSocketId);
-          return next;
-        });
-      }
-    );
-    webrtcManagerRef.current = webrtc;
-
     const speechService = new SpeechTranslationService(
       socket,
       selectedLanguage,
@@ -173,18 +152,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         isHost: true,
         spokenLanguage: selectedLanguage
       }
-    });
-
-    socket.on('user-joined', ({ socketId }) => {
-      webrtc.initiateOffer(socketId);
-    });
-
-    socket.on('room-participants-update', (list) => {
-      if (list) setParticipants(list);
-    });
-
-    socket.on('waiting-room-update', (queue) => {
-      setWaitingRoomList(queue);
     });
 
     socket.on('live-caption-chunk', (caption) => {
@@ -215,6 +182,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     });
 
     socket.on('host-muted-you', () => {
+      if (dailyCallRef.current) dailyCallRef.current.setLocalAudio(false);
       setIsMuted(true);
     });
 
@@ -224,11 +192,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     });
 
     return () => {
-      webrtc.destroy();
       speechService.stop();
-      socket.off('user-joined');
-      socket.off('room-participants-update');
-      socket.off('waiting-room-update');
       socket.off('live-caption-chunk');
       socket.off('new-chat-message');
       socket.off('new-reaction');
@@ -237,7 +201,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       socket.off('host-muted-you');
       socket.off('removed-by-host');
     };
-  }, [roomCode, localStream]);
+  }, [roomCode]);
 
   // Audio spectrum loop
   useEffect(() => {
@@ -251,23 +215,30 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     return () => clearInterval(spectrumInterval);
   }, []);
 
-  // Toggle Mute / Camera Track
+  // Daily Media Control Buttons
   const toggleMute = () => {
-    if (localStream) {
-      localStream.getAudioTracks().forEach(track => {
-        track.enabled = isMuted;
-      });
+    if (dailyCallRef.current) {
+      dailyCallRef.current.setLocalAudio(isMuted);
     }
     setIsMuted(!isMuted);
   };
 
   const toggleVideo = () => {
-    if (localStream) {
-      localStream.getVideoTracks().forEach(track => {
-        track.enabled = !isVideoOn;
-      });
+    if (dailyCallRef.current) {
+      dailyCallRef.current.setLocalVideo(!isVideoOn);
     }
     setIsVideoOn(!isVideoOn);
+  };
+
+  const toggleScreenShare = async () => {
+    if (!dailyCallRef.current) return;
+    if (isScreenSharing) {
+      await dailyCallRef.current.stopScreenShare();
+      setIsScreenSharing(false);
+    } else {
+      await dailyCallRef.current.startScreenShare();
+      setIsScreenSharing(true);
+    }
   };
 
   const handleCopyLink = () => {
@@ -285,7 +256,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     socket.emit('send-reaction', { emoji });
   };
 
-  // Optimistic Chat Handler
   const handleSendChatMessage = ({ text, originalLang, file }) => {
     const optimisticMsg = {
       id: `opt-${Date.now()}`,
@@ -307,17 +277,17 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   return (
     <div className="relative w-full h-[calc(100vh-4rem)] bg-[#05060B] flex overflow-hidden selection:bg-none">
       
-      {/* Voice Amplitude Reactive Particle Background */}
+      {/* Voice Amplitude Particle Background */}
       <VoiceParticles isSpeaking={!isMuted} amplitude={volumeLevel} />
       <SpeechCanvas3D isSpeaking={!isMuted} frequencyData={frequencyData} />
 
-      {/* Floating Emoji Reactions Canvas */}
+      {/* Floating Emoji Reactions Overlay */}
       <EmojiReactionsOverlay floatingReactions={floatingReactions} />
 
       {/* Main Video Call Content Area */}
       <div className="flex-1 flex flex-col relative h-full overflow-hidden z-10">
         
-        {/* Top Floating Status Bar */}
+        {/* Top Status Bar */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-lg">
           <div className="flex items-center gap-2">
             <ChatBotOrb isProcessing={!isMuted} />
@@ -326,15 +296,14 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           <span className="text-slate-600">|</span>
           <div className="flex items-center gap-1.5 text-xs text-slate-300">
             <Users className="w-3.5 h-3.5 text-[#00E5C7]" />
-            <span>{participants.length || 1} Connected</span>
+            <span>{dailyParticipants.length || 1} Connected</span>
           </div>
           <span className="text-slate-600">|</span>
           <AIStatusIndicator />
         </div>
 
-        {/* Top Right Share & Layout Bar */}
+        {/* Top Right Share & Layout Controls */}
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
-          
           <button
             onClick={handleCopyLink}
             className="px-3 py-1.5 rounded-xl bg-[#0A0E1A]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1.5 transition-all"
@@ -372,85 +341,66 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           </div>
         </div>
 
-        {/* Explicit Permission Banner */}
-        <PermissionBanner
-          errorType={permissionErrorType}
-          onRetry={requestMediaPermissions}
-        />
-
-        {/* Video Grid */}
+        {/* Video Grid (Daily Participants) */}
         <div className="flex-1 p-4 md:p-6 flex items-center justify-center">
           
           <div className={`w-full h-full max-w-6xl grid gap-4 items-center justify-center ${
-            remoteStreams.size === 0 ? 'grid-cols-1 max-w-2xl' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-2'
+            dailyParticipants.length <= 1 ? 'grid-cols-1 max-w-2xl' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-2'
           }`}>
             
-            {/* LOCAL PARTICIPANT VIDEO TILE ("YOU") */}
-            <div className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center group ${
-              !isMuted ? 'ring-2 ring-[#00E5C7] shadow-cyan-500/30' : ''
-            }`}>
-              {isVideoOn && localStream ? (
-                <video
-                  ref={handleLocalVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-cover transform -scale-x-100 transition-all ${
-                    isBlurBackground ? 'blur-md scale-105' : ''
-                  }`}
-                />
-              ) : (
+            {dailyParticipants.length === 0 ? (
+              {/* Local Fallback Tile when Daily joining */}
+              <div className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                   <img src={currentUser.avatar} className="w-24 h-24 rounded-full ring-4 ring-indigo-500/40 object-cover" alt="" />
                   <span className="text-sm font-bold text-white">{currentUser.name} (You)</span>
                 </div>
-              )}
-
-              <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
-                <span>{currentUser.name} (You)</span>
-                <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
-                  {selectedLanguage}
-                </span>
-                {isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
               </div>
+            ) : (
+              dailyParticipants.map((p) => {
+                const videoTrack = p.tracks?.video?.persistentTrack;
+                const isLocal = p.local;
 
-              {isScreenSharing && (
-                <div className="absolute inset-0 bg-indigo-950/90 flex flex-col items-center justify-center text-white space-y-2">
-                  <Monitor className="w-12 h-12 text-[#00E5C7] animate-bounce" />
-                  <span className="font-bold text-sm">You are sharing your screen</span>
-                </div>
-              )}
-            </div>
+                return (
+                  <div
+                    key={p.session_id}
+                    className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center group ${
+                      !p.audio ? '' : 'ring-2 ring-[#00E5C7] shadow-cyan-500/30'
+                    }`}
+                  >
+                    {p.video && videoTrack ? (
+                      <video
+                        autoPlay
+                        playsInline
+                        muted={isLocal}
+                        ref={(el) => {
+                          if (el && videoTrack && (!el.srcObject || el.srcObject.getVideoTracks()[0] !== videoTrack)) {
+                            el.srcObject = new MediaStream([videoTrack]);
+                          }
+                        }}
+                        className={`w-full h-full object-cover ${isLocal ? 'transform -scale-x-100' : ''}`}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-24 h-24 rounded-full bg-indigo-950 border border-indigo-500/30 flex items-center justify-center text-3xl font-bold text-indigo-200">
+                          {p.user_name ? p.user_name.charAt(0).toUpperCase() : 'P'}
+                        </div>
+                        <span className="text-sm font-bold text-white">{p.user_name || 'Participant'} {isLocal ? '(You)' : ''}</span>
+                      </div>
+                    )}
 
-            {/* REAL REMOTE WEBRTC PARTICIPANTS */}
-            {Array.from(remoteStreams.entries()).map(([remoteSocketId, stream]) => {
-              const peerInfo = participants.find(p => p.socketId === remoteSocketId) || { name: 'Peer', spokenLanguage: 'ja' };
-
-              return (
-                <div 
-                  key={remoteSocketId}
-                  className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center group"
-                >
-                  <video
-                    autoPlay
-                    playsInline
-                    ref={(el) => {
-                      if (el && el.srcObject !== stream) {
-                        el.srcObject = stream;
-                      }
-                    }}
-                    className="w-full h-full object-cover"
-                  />
-
-                  <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
-                    <span>{peerInfo.name}</span>
-                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-mono uppercase font-bold">
-                      {peerInfo.spokenLanguage || 'ja'}
-                    </span>
+                    {/* Name & Language Badge */}
+                    <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
+                      <span>{p.user_name || 'Participant'} {isLocal ? '(You)' : ''}</span>
+                      <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
+                        {isLocal ? selectedLanguage : 'ja'}
+                      </span>
+                      {!p.audio && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
 
           </div>
 
@@ -495,7 +445,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             </button>
 
             <button
-              onClick={() => setIsScreenSharing(!isScreenSharing)}
+              onClick={toggleScreenShare}
               className={`p-3 rounded-2xl transition-all shadow-lg ${
                 isScreenSharing
                   ? 'bg-indigo-600 text-white shadow-indigo-500/30'
@@ -592,7 +542,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       <HostControlsModal
         isOpen={isHostControlsOpen}
         onClose={() => setIsHostControlsOpen(false)}
-        participants={participants}
+        participants={dailyParticipants.map(p => ({ socketId: p.session_id, name: p.user_name || 'Participant' }))}
         waitingRoomList={waitingRoomList}
         roomSettings={roomSettings}
         onUpdateSettings={(newSettings) => {
