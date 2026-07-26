@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@daily-co/daily-js": "^0.68.0",
-    "@daily-co/daily-react": "^0.20.0",
     "@prisma/client": "^5.14.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
