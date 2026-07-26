@@ -1,0 +1,30 @@
+services:
+  # 1. NestJS / Express Backend Service
+  - type: web
+    name: linguaversa-backend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        value: file:./prisma/dev.db
+      - key: NODE_ENV
+        value: production
+
+  # 2. Python FastAPI AI Speech Translation Service
+  - type: web
+    name: linguaversa-ai-service
+    env: python
+    buildCommand: pip install fastapi uvicorn pydantic
+    startCommand: uvicorn ai-service.main:app --host 0.0.0.0 --port 8000
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: WHISPER_MODEL
+        value: whisper-v3
+      - key: TTS_PRIMARY_ENGINE
+        value: piper
+      - key: TTS_FALLBACK_ENGINE
+        value: edge-tts

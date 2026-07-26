@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-dark: #05060B;
+    --card-dark: #0A0E1A;
+    --border-dark: rgba(255, 255, 255, 0.08);
+    --cyan-teal: #00E5C7;
+    --electric-blue: #5B8CFF;
+    --violet-accent: #8B5CF6;
+  }
+
+  body {
+    background-color: var(--bg-dark);
+    color: #F4F6FF;
+    font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  }
+}
+
+/* Marvel HUD Glassmorphism */
+.glass-hud {
+  background: rgba(10, 14, 26, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-hud-hover:hover {
+  background: rgba(15, 22, 40, 0.85);
+  border-color: rgba(0, 229, 199, 0.4);
+  box-shadow: 0 0 25px -5px rgba(0, 229, 199, 0.25);
+}
+
+/* High Contrast Mode Utility */
+.high-contrast-mode {
+  --bg-dark: #000000;
+  color: #FFFFFF !important;
+}
+
+.high-contrast-mode .glass-hud {
+  background: #000000 !important;
+  border: 2px solid #00E5C7 !important;
+}
+
+/* Colorblind Mode Support */
+.colorblind-mode .status-live::before {
+  content: '● ';
+  color: #00E5C7;
+}
+
+/* Motion Reduced Fallback */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom HUD Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #05060B;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 199, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 199, 0.6);
+}
