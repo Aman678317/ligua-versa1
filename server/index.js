@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
+import { createDailyRoom } from './dailyService.js';
 
 const app = express();
 app.use(cors());
@@ -43,8 +44,15 @@ app.get('/', (req, res) => {
     status: 'online',
     service: 'LinguaVersa Realtime Backend Server',
     version: '1.1.0',
-    endpoints: ['/api/languages', '/api/meetings', '/api/summaries', '/api/analytics', '/api/contacts']
+    endpoints: ['/api/languages', '/api/meetings', '/api/summaries', '/api/analytics', '/api/contacts', '/api/daily/room']
   });
+});
+
+// Daily.co Managed Room Endpoint
+app.post('/api/daily/room', async (req, res) => {
+  const { roomCode } = req.body;
+  const roomData = await createDailyRoom(roomCode);
+  res.json(roomData);
 });
 
 // REST API Endpoints
@@ -56,13 +64,17 @@ app.get('/api/meetings', (req, res) => {
   res.json({ success: true, meetings: mockMeetings });
 });
 
-app.post('/api/meetings', (req, res) => {
+app.post('/api/meetings', async (req, res) => {
   const { title, description, scheduledStart, settings } = req.body;
+  const meetingCode = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+  const dailyRoom = await createDailyRoom(meetingCode);
+
   const newMeeting = {
     id: `meeting-${Date.now()}`,
-    code: `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`,
+    code: meetingCode,
+    dailyRoomUrl: dailyRoom.url,
     title: title || 'Instant Video Call',
-    description: description || 'Live translated WebRTC session',
+    description: description || 'Live translated session',
     status: 'LIVE',
     hostId: 'user-aman',
     scheduledStart: scheduledStart || new Date().toISOString(),
@@ -80,10 +92,11 @@ app.post('/api/meetings', (req, res) => {
   res.json({ success: true, meeting: newMeeting });
 });
 
-app.get('/api/meetings/:code', (req, res) => {
+app.get('/api/meetings/:code', async (req, res) => {
   const meeting = mockMeetings.find(m => m.code === req.params.code) || {
     id: `meeting-dynamic-${req.params.code}`,
     code: req.params.code,
+    dailyRoomUrl: `https://linguaversa.daily.co/${req.params.code}`,
     title: `Call (${req.params.code})`,
     status: 'LIVE',
     hostId: 'user-aman',
@@ -111,7 +124,7 @@ app.get('/api/contacts', (req, res) => {
   res.json({ success: true, contacts: mockUsers });
 });
 
-// SOCKET.IO REALTIME WEBRTC & LIVE SPEECH ENGINE
+// SOCKET.IO WEBRTC SIGNALLING & REALTIME COLLABORATION PIPELINE
 io.on('connection', (socket) => {
   let currentRoomCode = null;
   let currentUser = null;

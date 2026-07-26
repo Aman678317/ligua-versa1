@@ -12,6 +12,7 @@
     "prisma:db": "prisma db push"
   },
   "dependencies": {
+    "@daily-co/daily-js": "^0.65.0",
     "@prisma/client": "^5.14.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
