@@ -20,15 +20,14 @@ const io = new Server(httpServer, {
 // In-Memory Realtime Room State
 const rooms = new Map();
 
-// Helper to get or create room state
 function getRoom(meetingCode) {
   if (!rooms.has(meetingCode)) {
     rooms.set(meetingCode, {
       code: meetingCode,
       isLocked: false,
       waitingRoomEnabled: false,
-      participants: new Map(), // socketId -> participant info
-      waitingRoom: new Map(),  // socketId -> waiting participant info
+      participants: new Map(),
+      waitingRoom: new Map(),
       messages: [],
       polls: [],
       reactions: [],
@@ -38,19 +37,25 @@ function getRoom(meetingCode) {
   return rooms.get(meetingCode);
 }
 
-// REST API Endpoints
+// Root Endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    service: 'LinguaVersa Realtime Backend Server',
+    version: '1.1.0',
+    endpoints: ['/api/languages', '/api/meetings', '/api/summaries', '/api/analytics', '/api/contacts']
+  });
+});
 
-// Get supported languages
+// REST API Endpoints
 app.get('/api/languages', (req, res) => {
   res.json({ success: true, languages: mockLanguages });
 });
 
-// Get meetings list
 app.get('/api/meetings', (req, res) => {
   res.json({ success: true, meetings: mockMeetings });
 });
 
-// Create new meeting
 app.post('/api/meetings', (req, res) => {
   const { title, description, scheduledStart, settings } = req.body;
   const newMeeting = {
@@ -75,7 +80,6 @@ app.post('/api/meetings', (req, res) => {
   res.json({ success: true, meeting: newMeeting });
 });
 
-// Get meeting by code
 app.get('/api/meetings/:code', (req, res) => {
   const meeting = mockMeetings.find(m => m.code === req.params.code) || {
     id: `meeting-dynamic-${req.params.code}`,
@@ -88,12 +92,10 @@ app.get('/api/meetings/:code', (req, res) => {
   res.json({ success: true, meeting });
 });
 
-// Get summaries
 app.get('/api/summaries', (req, res) => {
   res.json({ success: true, summaries: mockSummaries });
 });
 
-// Generate meeting summary
 app.post('/api/summaries/generate', async (req, res) => {
   const { meetingTitle, transcript } = req.body;
   const summary = await generateAiSummary(meetingTitle || 'Live Translated Meeting', transcript || []);
@@ -101,12 +103,10 @@ app.post('/api/summaries/generate', async (req, res) => {
   res.json({ success: true, summary });
 });
 
-// Admin Analytics Metrics Endpoint
 app.get('/api/analytics', (req, res) => {
   res.json({ success: true, analytics: mockAnalytics });
 });
 
-// Contacts API
 app.get('/api/contacts', (req, res) => {
   res.json({ success: true, contacts: mockUsers });
 });
@@ -116,19 +116,15 @@ io.on('connection', (socket) => {
   let currentRoomCode = null;
   let currentUser = null;
 
-  // Join Call Room
   socket.on('join-room', ({ roomCode, user }) => {
     currentRoomCode = roomCode;
     currentUser = user;
     const room = getRoom(roomCode);
 
-    // Check waiting room condition
     if (room.waitingRoomEnabled && !user.isHost) {
       room.waitingRoom.set(socket.id, { socketId: socket.id, ...user });
       socket.join(`${roomCode}-waiting`);
       socket.emit('waiting-room-status', { status: 'WAITING', message: 'The host will let you in shortly.' });
-      
-      // Notify host
       io.to(roomCode).emit('waiting-room-update', Array.from(room.waitingRoom.values()));
       return;
     }
@@ -138,23 +134,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Add to active room
     socket.join(roomCode);
     room.participants.set(socket.id, { socketId: socket.id, ...user });
 
-    // Broadcast updated participant list to everyone in room
-    const participantsList = Array.from(room.participants.values());
-    io.to(roomCode).emit('room-participants-update', participantsList);
-
-    // Send chat history and current live captions
+    io.to(roomCode).emit('room-participants-update', Array.from(room.participants.values()));
     socket.emit('room-chat-history', room.messages);
     socket.emit('room-polls-history', room.polls);
-
-    // Notify room of new participant
     socket.to(roomCode).emit('user-joined', { socketId: socket.id, user });
   });
 
-  // Host Action: Admit from Waiting Room
   socket.on('admit-participant', ({ targetSocketId }) => {
     if (!currentRoomCode) return;
     const room = getRoom(currentRoomCode);
@@ -175,7 +163,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Host Action: Toggle Meeting Lock / Waiting Room
   socket.on('update-room-settings', ({ isLocked, waitingRoomEnabled }) => {
     if (!currentRoomCode) return;
     const room = getRoom(currentRoomCode);
@@ -188,13 +175,11 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Host Action: Mute All Participants
   socket.on('host-mute-all', () => {
     if (!currentRoomCode) return;
     io.to(currentRoomCode).emit('host-muted-you');
   });
 
-  // Host Action: Remove Participant
   socket.on('host-remove-participant', ({ targetSocketId }) => {
     if (!currentRoomCode) return;
     const room = getRoom(currentRoomCode);
@@ -208,7 +193,6 @@ io.on('connection', (socket) => {
     io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants.values()));
   });
 
-  // WebRTC Signaling: Offer, Answer, ICE Candidate
   socket.on('webrtc-offer', ({ targetSocketId, offer }) => {
     io.to(targetSocketId).emit('webrtc-offer', { senderSocketId: socket.id, offer });
   });
@@ -221,12 +205,10 @@ io.on('connection', (socket) => {
     io.to(targetSocketId).emit('webrtc-ice-candidate', { senderSocketId: socket.id, candidate });
   });
 
-  // Realtime Live Speech Translation Stream Endpoint
   socket.on('speech-chunk', async (data) => {
     if (!currentRoomCode) return;
     const { text, sourceLang, targetLang, speakerName, speakerId } = data;
 
-    // Process translation with latency tracking
     const translationResult = await processSpeechTranslation({
       speakerId: speakerId || socket.id,
       speakerName: speakerName || 'Participant',
@@ -238,11 +220,9 @@ io.on('connection', (socket) => {
     const room = getRoom(currentRoomCode);
     room.liveCaptions.push(translationResult);
 
-    // Broadcast live dual caption chunk to room
     io.to(currentRoomCode).emit('live-caption-chunk', translationResult);
   });
 
-  // In-Call Chat Message (with Auto Translation)
   socket.on('send-chat-message', async ({ text, originalLang }) => {
     if (!currentRoomCode) return;
     const room = getRoom(currentRoomCode);
@@ -261,7 +241,6 @@ io.on('connection', (socket) => {
     io.to(currentRoomCode).emit('new-chat-message', messageObj);
   });
 
-  // Reactions (Emoji pulses)
   socket.on('send-reaction', ({ emoji }) => {
     if (!currentRoomCode) return;
     io.to(currentRoomCode).emit('new-reaction', {
@@ -271,7 +250,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Polls
   socket.on('create-poll', ({ question, options }) => {
     if (!currentRoomCode) return;
     const room = getRoom(currentRoomCode);
@@ -297,7 +275,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle Disconnect
   socket.on('disconnect', () => {
     if (currentRoomCode) {
       const room = getRoom(currentRoomCode);

@@ -35,6 +35,15 @@ class TranslationResponse(BaseModel):
     target_lang: str
     metrics: LatencyMetrics
 
+@app.get("/")
+def root_status():
+    return {
+        "status": "online",
+        "service": "LinguaVersa Live Translation Engine",
+        "version": "1.1.0",
+        "endpoints": ["/health", "/translate"]
+    }
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "ai-service", "models_loaded": ["whisper-v3", "piper", "edge-tts"]}
