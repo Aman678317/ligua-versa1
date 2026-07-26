@@ -153,6 +153,7 @@ model TeamMember {
 model Meeting {
   id              String               @id @default(uuid())
   code            String               @unique // "lingua-382-991"
+  dailyRoomUrl    String?              // Managed Daily.co Video Room URL
   title           String
   description     String?
   hostId          String
