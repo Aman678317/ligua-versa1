@@ -205,6 +205,10 @@ io.on('connection', (socket) => {
     io.to(targetSocketId).emit('webrtc-ice-candidate', { senderSocketId: socket.id, candidate });
   });
 
+  socket.on('webrtc-log-error', ({ targetSocketId, state, timestamp }) => {
+    console.warn(`[WebRTC Log Error] Socket ${socket.id} -> Target ${targetSocketId} ICE State: ${state} at ${timestamp}`);
+  });
+
   socket.on('speech-chunk', async (data) => {
     if (!currentRoomCode) return;
     const { text, sourceLang, targetLang, speakerName, speakerId } = data;
@@ -230,7 +234,6 @@ io.on('connection', (socket) => {
     const messageId = `msg-${Date.now()}`;
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Translate for each participant based on their target language preference
     for (const [participantSocketId, participant] of room.participants.entries()) {
       let translatedText = text;
       const targetLang = participant.spokenLanguage || participant.targetLanguage || 'en';
@@ -248,7 +251,7 @@ io.on('connection', (socket) => {
         }
       } catch (err) {
         console.warn('[Chat Translation Fallback]', err);
-        translatedText = text; // Delivered untranslated if translation fails
+        translatedText = text;
       }
 
       const recipientMsgObj = {
