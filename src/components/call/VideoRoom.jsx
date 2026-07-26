@@ -30,9 +30,9 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [layoutMode, setLayoutMode] = useState('gallery');
 
   // Permission & Stream States
-  const [permissionErrorType, setPermissionErrorType] = useState(null); // 'NotAllowedError' | 'NotFoundError' | 'NotReadableError' | null
+  const [permissionErrorType, setPermissionErrorType] = useState(null);
   const [localStream, setLocalStream] = useState(null);
-  const [remoteStreams, setRemoteStreams] = useState(new Map()); // socketId -> MediaStream
+  const [remoteStreams, setRemoteStreams] = useState(new Map());
   const [participants, setParticipants] = useState([]);
 
   // Copy & Share Link State
@@ -72,17 +72,12 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   const shareableJoinUrl = `${window.location.origin}/meet/${roomCode}`;
 
-  // 1. MEDIA PERMISSIONS & getUserMedia WITH PARTIAL GRANT FALLBACK
+  // 1. MEDIA PERMISSIONS & getUserMedia
   const requestMediaPermissions = async () => {
     try {
-      // First attempt full Video + Audio grant
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
       setPermissionErrorType(null);
-
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
 
       const mixer = new AudioMixer();
       audioMixerRef.current = mixer;
@@ -90,7 +85,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     } catch (err) {
       console.warn('[getUserMedia Full Media Grant Failed]', err);
 
-      // Attempt fallback to Audio-only if video failed (partial grant path)
       try {
         const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         setLocalStream(audioOnlyStream);
@@ -101,7 +95,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         audioMixerRef.current = mixer;
         mixer.initialize(audioOnlyStream);
       } catch (audioErr) {
-        // Differentiate exact DOMException error type
         const errName = audioErr.name || err.name || 'NotAllowedError';
         setPermissionErrorType(errName);
       }
@@ -121,7 +114,26 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     };
   }, []);
 
-  // 2. SOCKET ROOM JOIN & MULTI-PEER WEBRTC
+  // 2. DEDICATED STREAM ATTACHMENT EFFECT FOR LOCAL SELF-VIEW VIDEO
+  useEffect(() => {
+    if (localVideoRef.current && localStream && isVideoOn) {
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(err => console.warn('[Local Video Play Exception]', err));
+      console.log('[LinguaVersa Media] Local stream successfully attached to video element:', localStream.id);
+    }
+  }, [localStream, isVideoOn]);
+
+  // Callback Ref to handle video node mount immediately
+  const handleLocalVideoRef = (el) => {
+    localVideoRef.current = el;
+    if (el && localStream && isVideoOn && el.srcObject !== localStream) {
+      el.srcObject = localStream;
+      el.play().catch(() => {});
+      console.log('[LinguaVersa Media] Local stream attached via ref callback:', localStream.id);
+    }
+  };
+
+  // 3. SOCKET ROOM JOIN & MULTI-PEER WEBRTC
   useEffect(() => {
     const webrtc = new WebRTCManager(
       socket,
@@ -379,7 +391,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             }`}>
               {isVideoOn && localStream ? (
                 <video
-                  ref={localVideoRef}
+                  ref={handleLocalVideoRef}
                   autoPlay
                   playsInline
                   muted
