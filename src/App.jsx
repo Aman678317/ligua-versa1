@@ -44,6 +44,18 @@ export default function App() {
   const [analytics, setAnalytics] = useState(mockAnalytics);
   const [contacts, setContacts] = useState(mockUsers);
 
+  // Check URL pathname for direct join link e.g. /meet/lingua-382-991
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (path.startsWith('/meet/')) {
+      const code = path.replace('/meet/', '').trim();
+      if (code) {
+        setActiveRoomCode(code);
+        setActiveTab('call');
+      }
+    }
+  }, []);
+
   // API Data Fetching
   useEffect(() => {
     fetch('/api/languages')
@@ -72,11 +84,19 @@ export default function App() {
     const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
     setActiveRoomCode(code);
     setActiveTab('call');
+    window.history.pushState({}, '', `/meet/${code}`);
   };
 
   const handleJoinCall = (code) => {
-    setActiveRoomCode(code || 'global-sync-892');
+    const cleanCode = code || 'global-sync-892';
+    setActiveRoomCode(cleanCode);
     setActiveTab('call');
+    window.history.pushState({}, '', `/meet/${cleanCode}`);
+  };
+
+  const handleLeaveCall = () => {
+    setActiveTab('dashboard');
+    window.history.pushState({}, '', '/');
   };
 
   const handleMeetingCreated = (newMeeting) => {
@@ -121,7 +141,7 @@ export default function App() {
             setSelectedLanguage={setSelectedLanguage}
             languages={languages}
             userSettings={userSettings}
-            onLeaveCall={() => setActiveTab('dashboard')}
+            onLeaveCall={handleLeaveCall}
           />
         )}
 
