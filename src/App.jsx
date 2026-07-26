@@ -8,7 +8,7 @@ import SettingsTab from './components/settings/SettingsTab';
 import AuthModal from './components/auth/AuthModal';
 import ScheduleMeetingModal from './components/modals/ScheduleMeetingModal';
 import MeetingCreatedModal from './components/modals/MeetingCreatedModal';
-import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from '../server/db';
+import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './mockData';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'call' | 'summary' | 'analytics' | 'settings'
