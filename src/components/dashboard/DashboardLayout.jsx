@@ -1,196 +1,244 @@
 import React, { useState } from 'react';
 import { 
-  Video, Calendar, Clock, Plus, Users, ArrowRight, ShieldCheck, 
-  Sparkles, PhoneCall, Copy, Check, Globe, FileText, Bell
+  Video, Keyboard, ArrowRight, ShieldCheck, Sparkles, Globe2, 
+  Users, Clock, Play, FileText, ChevronRight, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import HoloEarth from '../canvas/HoloEarth';
+import NewMeetingDropdown from '../landing/NewMeetingDropdown';
 
 export default function DashboardLayout({ 
   currentUser, 
   onStartInstantCall, 
   onJoinCall, 
-  onOpenSchedule,
+  onOpenSchedule, 
+  onCreateForLater, 
   meetings, 
   contacts, 
   onSelectSummary 
 }) {
-  const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [copiedCode, setCopiedCode] = useState(null);
+  const [inputCodeOrLink, setInputCodeOrLink] = useState('');
+  const [validationError, setValidationError] = useState('');
+  const [isValidating, setIsValidating] = useState(false);
 
-  const handleCopy = (code) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    setTimeout(() => setCopiedCode(null), 2000);
+  // Helper parsing bare code or full URL e.g. https://domain.com/meet/lingua-382-991 -> lingua-382-991
+  const parseMeetingCode = (raw) => {
+    let clean = raw.trim();
+    if (clean.includes('/meet/')) {
+      clean = clean.split('/meet/')[1];
+    }
+    if (clean.includes('?')) {
+      clean = clean.split('?')[0];
+    }
+    return clean;
   };
 
-  const handleJoin = (e) => {
+  const handleJoinSubmit = async (e) => {
     e.preventDefault();
-    if (joinCodeInput.trim()) {
-      onJoinCall(joinCodeInput.trim());
+    const code = parseMeetingCode(inputCodeOrLink);
+
+    if (!code) {
+      setValidationError('Please enter a valid meeting code or link.');
+      return;
+    }
+
+    setIsValidating(true);
+    setValidationError('');
+
+    try {
+      const res = await fetch(`/api/meetings/${code}`);
+      const data = await res.json();
+
+      if (data && data.success && data.meeting) {
+        onJoinCall(code);
+      } else {
+        setValidationError('Meeting not found. Please check the code and try again.');
+      }
+    } catch (err) {
+      // Fallback allowed for dynamic rooms
+      onJoinCall(code);
+    } finally {
+      setIsValidating(false);
     }
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+    <div className="min-h-[calc(100vh-4rem)] bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-[#00E5C7] selection:text-slate-950">
       
-      {/* Welcome Hero Banner with 3D Holographic Earth */}
-      <div className="relative rounded-3xl overflow-hidden p-8 md:p-10 bg-gradient-to-r from-[#05060B] via-[#0A0E1A] to-[#05060B] border border-white/10 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-8">
+      {/* Google Meet-Style Clean Landing Hero */}
+      <section className="relative w-full py-12 lg:py-20 px-4 sm:px-8 max-w-7xl mx-auto flex-1 flex flex-col justify-center">
         
-        {/* Left Content */}
-        <div className="relative z-10 max-w-xl space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#00E5C7]/10 border border-[#00E5C7]/30 text-[#00E5C7] text-xs font-semibold">
-            <Sparkles className="w-3.5 h-3.5" /> Real-time Multilingual HUD Engine Active
-          </div>
-
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#F4F6FF] tracking-tight leading-tight">
-            Speak your language.<br />
-            <span className="bg-gradient-to-r from-[#5B8CFF] via-[#8B5CF6] to-[#00E5C7] bg-clip-text text-transparent">
-              Be understood everywhere.
-            </span>
-          </h1>
-
-          <p className="text-sm sm:text-base text-slate-300">
-            Live speech-to-speech translation, dual captions, and AI meeting summaries — built directly into WebRTC video calls.
-          </p>
-
-          {/* Call Actions */}
-          <div className="pt-4 flex flex-wrap items-center gap-4">
-            
-            <button
-              onClick={onStartInstantCall}
-              className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-[#5B8CFF] via-[#8B5CF6] to-[#00E5C7] hover:opacity-90 text-white font-bold text-sm flex items-center gap-2 shadow-xl shadow-cyan-500/20 transition-all hover:scale-[1.02]"
-            >
-              <Video className="w-5 h-5" />
-              Start Instant Call
-            </button>
-
-            <form onSubmit={handleJoin} className="flex items-center gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-white/15">
-              <input
-                type="text"
-                value={joinCodeInput}
-                onChange={(e) => setJoinCodeInput(e.target.value)}
-                placeholder="Enter meeting code..."
-                className="bg-transparent px-3 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none w-36 sm:w-48"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl transition-all"
-              >
-                Join
-              </button>
-            </form>
-
-            <button
-              onClick={onOpenSchedule}
-              className="px-5 py-3.5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-sm flex items-center gap-2 transition-all"
-            >
-              <Calendar className="w-4 h-4 text-indigo-400" />
-              Schedule Call
-            </button>
-
-          </div>
-        </div>
-
-        {/* Right 3D Holographic Earth Globe Canvas */}
-        <div className="w-full md:w-80 h-72 relative shrink-0">
+        {/* Ambient Holographic Background */}
+        <div className="absolute inset-0 opacity-30 pointer-events-none overflow-hidden">
           <HoloEarth />
         </div>
 
-      </div>
-
-      {/* Main Grid: Scheduled Calls + Quick Contacts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left 2 Columns: Scheduled Meetings */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-cyan-400" /> Scheduled Meetings & Live Sessions
-            </h2>
-            <span className="text-xs text-slate-400 font-mono">{meetings.length} Total</span>
-          </div>
-
-          <div className="space-y-4">
-            {meetings.map((m) => (
-              <div 
-                key={m.id}
-                className="p-5 rounded-2xl bg-slate-900/80 border border-white/10 hover:border-indigo-500/40 transition-all shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-              >
-                <div className="space-y-1.5 max-w-lg">
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      m.status === 'LIVE' 
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
-                        : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                    }`}>
-                      {m.status === 'LIVE' ? '🔴 Live Now' : 'Scheduled'}
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">{m.code}</span>
-                  </div>
-
-                  <h3 className="font-bold text-white text-base">{m.title}</h3>
-                  <p className="text-xs text-slate-400 line-clamp-1">{m.description}</p>
-                </div>
-
-                <div className="flex items-center gap-2 self-end sm:self-center">
-                  <button
-                    onClick={() => handleCopy(m.code)}
-                    className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 transition-colors"
-                    title="Copy Invite Link"
-                  >
-                    {copiedCode === m.code ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
-
-                  <button
-                    onClick={() => onJoinCall(m.code)}
-                    className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
-                  >
-                    <PhoneCall className="w-4 h-4" />
-                    {m.status === 'LIVE' ? 'Join Live Room' : 'Start Call'}
-                  </button>
-                </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
+          
+          {/* Left Column: Two Primary Actions (Meet Layout) */}
+          <div className="lg:col-span-7 space-y-8">
+            
+            <div className="space-y-4">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[#00E5C7] text-xs font-semibold">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Next-Gen Video Calls with Live Speech Translation</span>
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Right Column: Multilingual Team Directory */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-indigo-400" /> Multilingual Contacts
-            </h2>
-          </div>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.1]">
+                Video calls and meetings <br />
+                <span className="bg-gradient-to-r from-[#00E5C7] via-cyan-400 to-indigo-400 bg-clip-text text-transparent">
+                  translated live for everyone
+                </span>
+              </h1>
 
-          <div className="bg-slate-900/80 rounded-2xl border border-white/10 p-4 space-y-3 shadow-lg">
-            {contacts.map((c) => (
-              <div 
-                key={c.id}
-                className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between hover:border-slate-700 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <img src={c.avatar} className="w-10 h-10 rounded-full object-cover ring-2 ring-indigo-500/30" alt="" />
-                  <div>
-                    <p className="text-xs font-bold text-white">{c.name}</p>
-                    <p className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                      <Globe className="w-3 h-3 text-cyan-400" /> Default: {c.defaultLang.toUpperCase()}
-                    </p>
+              <p className="text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
+                Connect, collaborate, and speak your native language. LinguaVersa translates speech in real time with sub-second dual captions and natural voice synthesis.
+              </p>
+            </div>
+
+            {/* Meet-Style Side-by-Side Action Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 max-w-2xl">
+              
+              {/* Action 1: New Meeting Dropdown */}
+              <NewMeetingDropdown
+                onStartInstantCall={onStartInstantCall}
+                onCreateForLater={onCreateForLater}
+                onOpenSchedule={onOpenSchedule}
+              />
+
+              {/* Action 2: Enter Code or Link Input */}
+              <form onSubmit={handleJoinSubmit} className="flex-1 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                    <Keyboard className="w-4 h-4" />
                   </div>
+                  <input
+                    type="text"
+                    value={inputCodeOrLink}
+                    onChange={(e) => {
+                      setInputCodeOrLink(e.target.value);
+                      setValidationError('');
+                    }}
+                    placeholder="Enter a code or link"
+                    className="w-full bg-slate-900/90 border border-white/10 rounded-2xl pl-10 pr-4 py-3.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00E5C7]/60 shadow-inner transition-all"
+                  />
                 </div>
 
                 <button
-                  onClick={() => onJoinCall(`direct-${c.id}`)}
-                  className="p-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs transition-colors"
-                  title="Call Contact"
+                  type="submit"
+                  disabled={!inputCodeOrLink.trim() || isValidating}
+                  className="px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm transition-all"
                 >
-                  <PhoneCall className="w-4 h-4" />
+                  {isValidating ? 'Validating...' : 'Join'}
                 </button>
+              </form>
+
+            </div>
+
+            {/* Inline Validation Error Message */}
+            {validationError && (
+              <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl max-w-md">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{validationError}</span>
               </div>
-            ))}
+            )}
+
+            <div className="pt-4 border-t border-white/10 flex items-center gap-6 text-xs text-slate-400">
+              <span className="flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-emerald-400" /> End-to-End WebRTC Security</span>
+              <span className="flex items-center gap-1.5"><Globe2 className="w-4 h-4 text-cyan-400" /> 100+ Languages Supported</span>
+            </div>
+
           </div>
+
+          {/* Right Column: Hero Graphic Preview */}
+          <div className="lg:col-span-5 flex justify-center">
+            <div className="relative w-full max-w-md bg-[#0A0E1A]/80 border border-white/10 rounded-3xl p-6 shadow-2xl backdrop-blur-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-bold text-white">Live Translation Preview</span>
+                </div>
+                <span className="text-[10px] font-mono bg-cyan-500/20 text-[#00E5C7] px-2 py-0.5 rounded font-bold">P75 &lt; 2.1s</span>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-white/10 text-xs space-y-1">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="font-bold text-slate-200">Kenji Sato (Tokyo)</span>
+                    <span className="text-cyan-400 font-mono">JA ➔ EN</span>
+                  </div>
+                  <p className="text-white font-medium">「来週のデプロイの準備はできていますか？」</p>
+                  <p className="text-[#00E5C7] text-[11px]">"Are you ready for next week's deployment?"</p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-white/10 text-xs space-y-1">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="font-bold text-slate-200">Aman Sharma (Mumbai)</span>
+                    <span className="text-indigo-400 font-mono">EN ➔ JA</span>
+                  </div>
+                  <p className="text-white font-medium">"Yes, all services are online."</p>
+                  <p className="text-indigo-300 text-[11px]">「はい、すべてのサービスがオンラインです。」</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
 
-      </div>
+      </section>
+
+      {/* Recent Scheduled Calls & AI Summaries Section */}
+      <section className="border-t border-white/10 bg-[#0A0E1A]/40 py-12 px-4 sm:px-8">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
+          
+          {/* Scheduled Calls List */}
+          <div className="space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#00E5C7]" /> Scheduled Meetings
+            </h3>
+
+            <div className="space-y-2">
+              {meetings.map((m) => (
+                <div key={m.id} className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 flex items-center justify-between hover:border-white/20 transition-all">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-bold text-white">{m.title}</h4>
+                    <p className="text-[11px] font-mono text-cyan-400">{m.code}</p>
+                  </div>
+                  <button
+                    onClick={() => onJoinCall(m.code)}
+                    className="px-3.5 py-2 rounded-xl bg-cyan-500/20 hover:bg-[#00E5C7] text-[#00E5C7] hover:text-slate-950 font-bold text-xs transition-colors flex items-center gap-1"
+                  >
+                    <span>Join</span> <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Post-Call Summaries Quick Access */}
+          <div className="space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <FileText className="w-4 h-4 text-indigo-400" /> Recent AI Meeting Summaries
+            </h3>
+
+            <div className="p-5 rounded-2xl bg-slate-900/80 border border-white/10 space-y-3">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span className="font-bold text-white">Cross-Border Product Architecture Sync</span>
+                <span className="text-slate-500">Yesterday</span>
+              </div>
+              <p className="text-xs text-slate-400 line-clamp-2">
+                The team finalized the WebRTC TURN relay deployment strategy for cross-network connectivity and agreed on lowering STT chunking intervals.
+              </p>
+              <button
+                onClick={onSelectSummary}
+                className="text-xs font-bold text-[#00E5C7] hover:underline flex items-center gap-1"
+              >
+                <span>View Full Summary & Action Items</span> <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </section>
 
     </div>
   );

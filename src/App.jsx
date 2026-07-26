@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Navbar from './components/navbar/Navbar';
 import DashboardLayout from './components/dashboard/DashboardLayout';
+import PreJoinPreview from './components/prejoin/PreJoinPreview';
 import VideoRoom from './components/call/VideoRoom';
 import MeetingSummaryView from './components/summary/MeetingSummaryView';
 import AdminAnalytics from './components/analytics/AdminAnalytics';
@@ -11,7 +12,7 @@ import MeetingCreatedModal from './components/modals/MeetingCreatedModal';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './mockData';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'call' | 'summary' | 'analytics' | 'settings'
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'prejoin' | 'call' | 'summary' | 'analytics' | 'settings'
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [activeRoomCode, setActiveRoomCode] = useState('global-sync-892');
   
@@ -51,7 +52,7 @@ export default function App() {
       const code = path.replace('/meet/', '').trim();
       if (code) {
         setActiveRoomCode(code);
-        setActiveTab('call');
+        setActiveTab('prejoin');
       }
     }
   }, []);
@@ -80,18 +81,56 @@ export default function App() {
   }, []);
 
   // Handlers
-  const handleStartInstantCall = () => {
+  const handleStartInstantCall = async () => {
     const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
-    setActiveRoomCode(code);
-    setActiveTab('call');
-    window.history.pushState({}, '', `/meet/${code}`);
+    
+    try {
+      const res = await fetch('/api/meetings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Instant Video Call' })
+      });
+      const data = await res.json();
+      const finalCode = data?.meeting?.code || code;
+      
+      setActiveRoomCode(finalCode);
+      setActiveTab('prejoin');
+      window.history.pushState({}, '', `/meet/${finalCode}`);
+    } catch (e) {
+      setActiveRoomCode(code);
+      setActiveTab('prejoin');
+      window.history.pushState({}, '', `/meet/${code}`);
+    }
+  };
+
+  const handleCreateForLater = async () => {
+    const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+    const newMeeting = {
+      id: `meeting-${Date.now()}`,
+      code,
+      title: 'Scheduled Call for Later',
+      description: 'Share this link with participants to join later',
+      status: 'SCHEDULED',
+      hostId: currentUser.id,
+      scheduledStart: new Date(Date.now() + 3600000).toISOString()
+    };
+    setMeetings((prev) => [newMeeting, ...prev]);
+    setCreatedMeeting(newMeeting);
   };
 
   const handleJoinCall = (code) => {
     const cleanCode = code || 'global-sync-892';
     setActiveRoomCode(cleanCode);
-    setActiveTab('call');
+    setActiveTab('prejoin');
     window.history.pushState({}, '', `/meet/${cleanCode}`);
+  };
+
+  const handleConfirmJoinFromGreenroom = (roomCode, participantDetails) => {
+    if (participantDetails?.name) {
+      setCurrentUser(prev => ({ ...prev, name: participantDetails.name }));
+    }
+    setActiveRoomCode(roomCode);
+    setActiveTab('call');
   };
 
   const handleLeaveCall = () => {
@@ -126,10 +165,23 @@ export default function App() {
             currentUser={currentUser}
             onStartInstantCall={handleStartInstantCall}
             onJoinCall={handleJoinCall}
+            onCreateForLater={handleCreateForLater}
             onOpenSchedule={() => setIsScheduleOpen(true)}
             meetings={meetings}
             contacts={contacts}
             onSelectSummary={() => setActiveTab('summary')}
+          />
+        )}
+
+        {activeTab === 'prejoin' && (
+          <PreJoinPreview
+            roomCode={activeRoomCode}
+            currentUser={currentUser}
+            selectedLanguage={selectedLanguage}
+            setSelectedLanguage={setSelectedLanguage}
+            languages={languages}
+            onJoinCall={handleConfirmJoinFromGreenroom}
+            onCancel={handleLeaveCall}
           />
         )}
 
