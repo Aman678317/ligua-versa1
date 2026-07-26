@@ -9,11 +9,11 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "https://linguaversa-backend.onrender.com/api/$1"
+      "dest": "https://ligua-versa1.onrender.com/api/$1"
     },
     {
       "src": "/socket.io/(.*)",
-      "dest": "https://linguaversa-backend.onrender.com/socket.io/$1"
+      "dest": "https://ligua-versa1.onrender.com/socket.io/$1"
     },
     {
       "handle": "filesystem"
