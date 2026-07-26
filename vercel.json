@@ -1,26 +1,16 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "package.json",
-      "use": "@vercel/vite"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "https://ligua-versa1.onrender.com/api/$1"
+      "source": "/api/:path*",
+      "destination": "https://ligua-versa1.onrender.com/api/:path*"
     },
     {
-      "src": "/socket.io/(.*)",
-      "dest": "https://ligua-versa1.onrender.com/socket.io/$1"
+      "source": "/socket.io/:path*",
+      "destination": "https://ligua-versa1.onrender.com/socket.io/:path*"
     },
     {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/:path*",
+      "destination": "/index.html"
     }
   ]
 }
