@@ -1,1 +1,1 @@
-# Empty file for Python microservice requirements located in ./ai-service/requirements.txt
+# Note: Python dependencies for ai-service microservice are located in ./ai-service/requirements.txt
