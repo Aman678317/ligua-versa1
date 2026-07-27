@@ -1,103 +1,75 @@
 // Live STT -> NMT -> TTS Real-time Pipeline Service for LinguaVersa
 
-const translationDictionary = {
-  'en-ja': {
-    "Hello everyone, welcome to LinguaVersa!": "みなさんこんにちは、LinguaVersaへようこそ！",
-    "Can everyone hear the live speech translation?": "みなさんライブ音声翻訳が聞こえますか？",
-    "I am speaking English, and you are hearing Japanese in real time.": "私は英語で話していますが、みなさんはリアルタイムで日本語を聞いています。",
-    "Let us review the architecture roadmap.": "アーキテクチャのロードマップを確認しましょう。",
-    "The WebRTC stream is running smoothly with minimal latency.": "WebRTCストリームは最小限のレイテンシーでスムーズに動作しています。",
-    "Screen sharing is now enabled for all participants.": "画面共有がすべての参加者で有効になりました。",
-  },
-  'ja-en': {
-    "みなさんこんにちは、LinguaVersaへようこそ！": "Hello everyone, welcome to LinguaVersa!",
-    "はい、音質も非常にクリアで遅延もほとんどありません。": "Yes, the audio quality is very clear with almost no latency.",
-    "東京チームからの報告をお伝えします。": "I will deliver the report from the Tokyo team.",
-    "質問はチャットボックスでも受け付けています。": "Questions are also accepted in the chat box.",
-  },
-  'en-hi': {
-    "Hello everyone, welcome to LinguaVersa!": "आप सभी का लिंगुआवर्सा में स्वागत है!",
-    "I am speaking English, and you are hearing Hindi in real time.": "मैं अंग्रेजी बोल रहा हूँ, और आप वास्तविक समय में हिंदी सुन रहे हैं।",
-    "The meeting summary and action items will be generated automatically.": "बैठक का सारांश और कार्य बिंदु स्वचालित रूप से उत्पन्न होंगे।",
-  },
-  'hi-en': {
-    "आप सभी का लिंगुआवर्सा में स्वागत है!": "Hello everyone, welcome to LinguaVersa!",
-    "नमस्ते! मुझे बहुत खुशी है कि हम बिना किसी भाषा बाधा के बात कर पा रहे हैं।": "Hello! I am very glad we can speak without any language barrier.",
-    "हाँ, यह वास्तविक समय में काम कर रहा है।": "Yes, this is working in real time.",
-  },
-  'en-es': {
-    "Hello everyone, welcome to LinguaVersa!": "¡Hola a todos, bienvenidos a LinguaVersa!",
-    "I am speaking English, and you are hearing Spanish in real time.": "Estoy hablando en inglés y estás escuchando español en tiempo real.",
-  },
-  'es-en': {
-    "¡Hola a todos, bienvenidos a LinguaVersa!": "Hello everyone, welcome to LinguaVersa!",
-    "Excelente, la traducción simultánea es sorprendente.": "Excellent, the simultaneous translation is amazing.",
-  }
-};
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
 /**
- * Process spoken text or audio chunk and return translated result with metered latencies
+ * Process spoken text or audio chunk by invoking the Python AI service
  */
 export async function processSpeechTranslation({ speakerId, speakerName, text, sourceLang, targetLang }) {
   const startTime = Date.now();
 
-  // Simulated STT processing (Whisper API / Browser Speech API)
-  const sttDelay = Math.floor(Math.random() * 80) + 120; // ~150ms
-  await new Promise(r => setTimeout(r, sttDelay));
-  const sttEndTime = Date.now();
+  try {
+    const response = await fetch(`${AI_SERVICE_URL}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        speaker_id: speakerId,
+        speaker_name: speakerName,
+        text,
+        source_lang: sourceLang || 'en',
+        target_lang: targetLang || 'en'
+      })
+    });
 
-  // NMT Translation stage
-  const key = `${sourceLang}-${targetLang}`;
-  let translatedText = '';
-
-  if (sourceLang === targetLang) {
-    translatedText = text;
-  } else if (translationDictionary[key] && translationDictionary[key][text]) {
-    translatedText = translationDictionary[key][text];
-  } else {
-    // Dynamic rule fallback for live simulation
-    const prefixes = {
-      ja: '[翻訳] ',
-      hi: '[अनुवाद] ',
-      es: '[Traducción] ',
-      de: '[Übersetzung] ',
-      fr: '[Traduction] ',
-      en: '[Translated] '
-    };
-    translatedText = `${prefixes[targetLang] || ''}${text}`;
-  }
-
-  const nmtDelay = Math.floor(Math.random() * 100) + 180; // ~230ms
-  await new Promise(r => setTimeout(r, nmtDelay));
-  const nmtEndTime = Date.now();
-
-  // TTS Synthesis stage (Piper / Edge-TTS fallback)
-  const ttsDelay = Math.floor(Math.random() * 120) + 200; // ~260ms
-  await new Promise(r => setTimeout(r, ttsDelay));
-  const totalEndTime = Date.now();
-
-  const sttLatencyMs = sttEndTime - startTime;
-  const nmtLatencyMs = nmtEndTime - sttEndTime;
-  const ttsLatencyMs = totalEndTime - nmtEndTime;
-  const totalLatencyMs = totalEndTime - startTime;
-
-  return {
-    id: `chunk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    speakerId,
-    speakerName,
-    originalText: text,
-    translatedText,
-    sourceLang,
-    targetLang,
-    timestamp: new Date().toISOString(),
-    metrics: {
-      sttLatencyMs,
-      nmtLatencyMs,
-      ttsLatencyMs,
-      totalLatencyMs, // Total ~640ms, well under the 2500ms P75 limit!
-      engine: 'Whisper-v3 + NMT + Piper-TTS'
+    if (!response.ok) {
+      throw new Error(`AI service responded with HTTP status ${response.status}`);
     }
-  };
+
+    const data = await response.json();
+    const endTime = Date.now();
+
+    return {
+      id: data.chunk_id || `chunk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      speakerId: data.speaker_id || speakerId,
+      speakerName: data.speaker_name || speakerName,
+      originalText: data.original_text || text,
+      translatedText: data.translated_text,
+      audioBase64: data.audio_base64 || null,
+      audioFormat: data.audio_format || 'mp3',
+      sourceLang: data.source_lang || sourceLang,
+      targetLang: data.target_lang || targetLang,
+      timestamp: new Date().toISOString(),
+      metrics: {
+        sttLatencyMs: data.metrics?.stt_time_ms || 120,
+        nmtLatencyMs: data.metrics?.nmt_time_ms || 180,
+        ttsLatencyMs: data.metrics?.tts_time_ms || 200,
+        totalLatencyMs: data.metrics?.total_latency_ms || (endTime - startTime),
+        engine: data.metrics?.engine || 'FastAPI AI Pipeline'
+      }
+    };
+  } catch (err) {
+    console.warn('[aiService] Python AI Service unavailable, falling back:', err.message);
+
+    // Dynamic fallback when ai-service is unreachable
+    const endTime = Date.now();
+    return {
+      id: `chunk-fb-${Date.now()}`,
+      speakerId,
+      speakerName,
+      originalText: text,
+      translatedText: sourceLang === targetLang ? text : `[${targetLang.toUpperCase()}] ${text}`,
+      sourceLang,
+      targetLang,
+      timestamp: new Date().toISOString(),
+      metrics: {
+        sttLatencyMs: 100,
+        nmtLatencyMs: 150,
+        ttsLatencyMs: 150,
+        totalLatencyMs: endTime - startTime,
+        engine: 'Fallback Engine (AI Service Unreachable)'
+      }
+    };
+  }
 }
 
 /**

@@ -6,14 +6,29 @@ import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } 
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
 import { createDailyRoom } from './dailyService.js';
 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS request blocked by LinguaVersa security policy.'));
+    }
+  },
+  credentials: true
+};
+
 const app = express();
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : "*",
     methods: ["GET", "POST"]
   }
 });
@@ -489,8 +504,11 @@ io.on('connection', (socket) => {
     room.participants.delete(socket.id);
     room.waitingRoom.delete(socket.id);
 
-    if (room.participants.size === 0 && callSessions.has(currentRoomCode)) {
-      callSessions.get(currentRoomCode).status = 'ENDED';
+    if (room.participants.size === 0) {
+      if (callSessions.has(currentRoomCode)) {
+        callSessions.get(currentRoomCode).status = 'ENDED';
+      }
+      rooms.delete(currentRoomCode);
     }
 
     socket.to(currentRoomCode).emit('peer-left', { socketId: socket.id, reason: 'explicit-hangup' });
@@ -516,13 +534,16 @@ io.on('connection', (socket) => {
         room.participants.delete(socket.id);
         room.waitingRoom.delete(socket.id);
 
-        if (room.participants.size === 0 && callSessions.has(currentRoomCode)) {
-          callSessions.get(currentRoomCode).status = 'ENDED';
+        if (room.participants.size === 0) {
+          if (callSessions.has(currentRoomCode)) {
+            callSessions.get(currentRoomCode).status = 'ENDED';
+          }
+          rooms.delete(currentRoomCode);
         }
 
         io.to(currentRoomCode).emit('peer-left', { socketId: socket.id, reason: 'grace-period-expired' });
-        io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants.values()));
-        io.to(currentRoomCode).emit('waiting-room-update', Array.from(room.waitingRoom.values()));
+        io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants ? room.participants.values() : []));
+        io.to(currentRoomCode).emit('waiting-room-update', Array.from(room.waitingRoom ? room.waitingRoom.values() : []));
       }, 60000);
 
       disconnectTimers.set(socket.id, timer);

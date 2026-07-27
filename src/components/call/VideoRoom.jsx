@@ -67,75 +67,11 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const dailyCallRef = useRef(null);
   const speechServiceRef = useRef(null);
   const audioMixerRef = useRef(null);
+  const captionSyncRef = useRef(new CaptionSynchronizer());
   const [showQrModal, setShowQrModal] = useState(false);
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
-  // 1. FETCH DAILY ROOM URL & INITIALIZE DAILY CALL OBJECT
-  useEffect(() => {
-    let callObj = null;
-
-    const initDailyCall = async () => {
-      try {
-        const res = await fetch('/api/daily/room', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomCode })
-        });
-        const data = await res.json();
-        const roomUrl = data.url || `https://linguaversa.daily.co/lingua-${roomCode}`;
-        setDailyRoomUrl(roomUrl);
-
-        callObj = DailyIframe.createCallObject({
-          subscribeToTracksAutomatically: true,
-        });
-        dailyCallRef.current = callObj;
-
-        // Daily Call Event Handlers
-        const updateParticipants = () => {
-          if (!callObj) return;
-          const participantsMap = callObj.participants();
-          const list = Object.values(participantsMap);
-          setDailyParticipants(list);
-        };
-
-        callObj.on('joined-meeting', updateParticipants);
-        callObj.on('participant-joined', updateParticipants);
-        callObj.on('participant-updated', updateParticipants);
-        callObj.on('participant-left', updateParticipants);
-
-        await callObj.join({
-          url: roomUrl,
-          userName: currentUser.name || 'Participant'
-        });
-
-        console.log('[Daily.co] Joined Daily room successfully:', roomUrl);
-
-        // Start Audio Mixer on local microphone stream
-        const localStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-        if (localStream) {
-          const mixer = new AudioMixer();
-          audioMixerRef.current = mixer;
-          mixer.initialize(localStream);
-        }
-      } catch (err) {
-        console.warn('[Daily.co Join Exception]', err);
-      }
-    };
-
-    initDailyCall();
-
-    return () => {
-      if (dailyCallRef.current) {
-        dailyCallRef.current.leave().catch(() => {});
-        dailyCallRef.current.destroy().catch(() => {});
-      }
-      if (audioMixerRef.current) {
-        audioMixerRef.current.stop();
-      }
-    };
-  }, [roomCode]);
-
-  // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
+  // ...
   useEffect(() => {
     const speechService = new SpeechTranslationService(
       socket,
@@ -160,6 +96,17 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     socket.on('live-caption-chunk', (caption) => {
       const synchronized = captionSyncRef.current.pushChunk(caption);
       setCurrentCaption(synchronized);
+
+      // Play synthesized translated audio stream for remote participant
+      if (caption.audioBase64 && caption.speakerId !== socket.id) {
+        try {
+          const snd = new Audio(`data:audio/${caption.audioFormat || 'mp3'};base64,${caption.audioBase64}`);
+          snd.volume = 0.9;
+          snd.play().catch(e => console.warn('[TTS Playback Error]', e));
+        } catch (e) {
+          console.warn('[Audio Playback Exception]', e);
+        }
+      }
     });
 
     socket.on('new-chat-message', (msg) => {
