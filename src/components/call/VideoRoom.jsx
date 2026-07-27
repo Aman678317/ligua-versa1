@@ -31,6 +31,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   // Daily Participants & Stream Tracks State
   const [dailyParticipants, setDailyParticipants] = useState([]);
+  const [socketParticipants, setSocketParticipants] = useState([]);
   const [dailyRoomUrl, setDailyRoomUrl] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
   const [localCameraStream, setLocalCameraStream] = useState(null);
@@ -81,7 +82,40 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   const [isHost, setIsHost] = useState(false);
 
-  // 1. FETCH EXISTING DAILY ROOM URL & JOIN (GET ONLY - NEVER RE-CREATE ON JOIN)
+  // 1. CAPTURE LOCAL CAMERA & AUDIO MEDIA STREAM IMMEDIATELY
+  useEffect(() => {
+    let activeStream = null;
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => {
+          return navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        });
+
+        if (stream) {
+          activeStream = stream;
+          setLocalCameraStream(stream);
+          const mixer = new AudioMixer();
+          audioMixerRef.current = mixer;
+          mixer.initialize(stream);
+        }
+      } catch (err) {
+        console.warn('[Camera Media Stream Access Exception]', err);
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      if (activeStream) {
+        activeStream.getTracks().forEach(t => t.stop());
+      }
+      if (audioMixerRef.current) {
+        audioMixerRef.current.stop();
+      }
+    };
+  }, []);
+
+  // 2. FETCH DAILY ROOM & JOIN INSTANCE (NON-BLOCKING SAFE JOIN)
   useEffect(() => {
     let callObj = null;
 
@@ -90,7 +124,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         let roomUrl = '';
         let foundHostId = '';
 
-        // Check /api/calls/:sessionId first
         const callRes = await fetch(`/api/calls/${roomCode}`).catch(() => null);
         if (callRes && callRes.ok) {
           const callData = await callRes.json();
@@ -100,7 +133,6 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           }
         }
 
-        // Check /api/meetings/:code if not found in call sessions
         if (!roomUrl) {
           const meetingRes = await fetch(`/api/meetings/${roomCode}`).catch(() => null);
           if (meetingRes && meetingRes.ok) {
@@ -112,8 +144,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           }
         }
 
-        const calculatedIsHost = Boolean(foundHostId && currentUser?.id && foundHostId === currentUser.id);
-        setIsHost(calculatedIsHost);
+        setIsHost(Boolean(foundHostId && currentUser?.id && foundHostId === currentUser.id));
 
         if (!roomUrl) {
           const safeCode = roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
@@ -122,47 +153,37 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
         setDailyRoomUrl(roomUrl);
 
-        callObj = DailyIframe.createCallObject({
-          subscribeToTracksAutomatically: true,
-        });
-        dailyCallRef.current = callObj;
+        if (roomUrl && roomUrl.includes('daily.co') && !roomUrl.includes('fallback-room')) {
+          callObj = DailyIframe.createCallObject({
+            subscribeToTracksAutomatically: true,
+          });
+          dailyCallRef.current = callObj;
 
-        const updateParticipants = () => {
-          if (!callObj) return;
-          const participantsMap = callObj.participants();
-          const list = Object.values(participantsMap);
-          setDailyParticipants(list);
-        };
+          const updateParticipants = () => {
+            if (!callObj) return;
+            const participantsMap = callObj.participants();
+            const list = Object.values(participantsMap);
+            setDailyParticipants(list);
+          };
 
-        callObj.on('joined-meeting', updateParticipants);
-        callObj.on('participant-joined', updateParticipants);
-        callObj.on('participant-updated', updateParticipants);
-        callObj.on('participant-left', updateParticipants);
-        callObj.on('track-started', updateParticipants);
-        callObj.on('track-stopped', updateParticipants);
+          callObj.on('joined-meeting', updateParticipants);
+          callObj.on('participant-joined', updateParticipants);
+          callObj.on('participant-updated', updateParticipants);
+          callObj.on('participant-left', updateParticipants);
+          callObj.on('track-started', updateParticipants);
+          callObj.on('track-stopped', updateParticipants);
 
-        await callObj.join({
-          url: roomUrl,
-          userName: currentUser.name || 'Participant',
-          startVideoOff: false,
-          startAudioOff: false
-        });
+          await callObj.join({
+            url: roomUrl,
+            userName: currentUser.name || 'Participant',
+            startVideoOff: false,
+            startAudioOff: false
+          }).catch((e) => console.warn('[Daily Join Failed]', e));
 
-        await callObj.setLocalVideo(true).catch(() => {});
-        console.log('[Daily.co] Joined Daily room successfully:', roomUrl);
-
-        const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => {
-          return navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-        });
-
-        if (localStream) {
-          setLocalCameraStream(localStream);
-          const mixer = new AudioMixer();
-          audioMixerRef.current = mixer;
-          mixer.initialize(localStream);
+          await callObj.setLocalVideo(true).catch(() => {});
         }
       } catch (err) {
-        console.warn('[Daily.co Join Exception]', err);
+        console.warn('[Daily.co Setup Warning]', err);
       }
     };
 
@@ -173,19 +194,13 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         dailyCallRef.current.leave().catch(() => {});
         dailyCallRef.current.destroy().catch(() => {});
       }
-      if (localCameraStream) {
-        localCameraStream.getTracks().forEach(t => t.stop());
-      }
-      if (audioMixerRef.current) {
-        audioMixerRef.current.stop();
-      }
     };
   }, [roomCode, currentUser?.id]);
 
   const [translatingSpeakers, setTranslatingSpeakers] = useState({});
   const [activeDubbingSpeaker, setActiveDubbingSpeaker] = useState(null);
 
-  // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
+  // 3. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
   useEffect(() => {
     const speechService = new SpeechTranslationService(
       socket,
@@ -195,12 +210,15 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     );
     speechServiceRef.current = speechService;
     
-    // Pass local audio stream if available
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      speechService.start(stream);
-    }).catch(() => {
-      speechService.start();
-    });
+    if (localCameraStream) {
+      speechService.start(localCameraStream);
+    } else {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        speechService.start(stream);
+      }).catch(() => {
+        speechService.start();
+      });
+    }
 
     socket.emit('join-room', {
       roomCode,
@@ -211,6 +229,10 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         isHost: isHost,
         spokenLanguage: selectedLanguage
       }
+    });
+
+    socket.on('room-participants-update', (participants) => {
+      setSocketParticipants(participants);
     });
 
     socket.on('speaker-translating-status', ({ speakerId, isTranslating }) => {
@@ -661,6 +683,46 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
               );
             }
 
+            const displayParticipants = (() => {
+              if (dailyParticipants.length > 0) {
+                return dailyParticipants.map(p => ({
+                  id: p.session_id,
+                  name: p.user_name || (p.local ? currentUser.name : 'Participant'),
+                  isLocal: p.local,
+                  videoTrack: p.tracks?.video?.persistentTrack || p.tracks?.video?.track || (p.local && localCameraStream ? localCameraStream.getVideoTracks()[0] : null),
+                  audio: p.audio,
+                  video: p.video,
+                  raw: p
+                }));
+              }
+
+              if (socketParticipants.length > 0) {
+                return socketParticipants.map(sp => {
+                  const isLocal = sp.socketId === socket.id || sp.id === currentUser.id;
+                  return {
+                    id: sp.socketId || sp.id,
+                    name: sp.name || sp.user?.name || (isLocal ? currentUser.name : 'Participant'),
+                    isLocal,
+                    videoTrack: isLocal && localCameraStream ? localCameraStream.getVideoTracks()[0] : null,
+                    audio: true,
+                    video: isLocal ? isVideoOn : true,
+                    spokenLanguage: sp.spokenLanguage || sp.user?.spokenLanguage || 'en',
+                    raw: sp
+                  };
+                });
+              }
+
+              return [{
+                id: currentUser.id || 'local-user',
+                name: currentUser.name || 'Participant',
+                isLocal: true,
+                videoTrack: localCameraStream ? localCameraStream.getVideoTracks()[0] : null,
+                audio: !isMuted,
+                video: isVideoOn,
+                spokenLanguage: selectedLanguage
+              }];
+            })();
+
             const getGridClass = (count) => {
               if (count <= 1) return 'grid-cols-1 max-w-2xl';
               if (count === 2) return 'grid-cols-1 md:grid-cols-2 max-w-5xl';
@@ -671,81 +733,51 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             };
 
             return (
-              <div className={`w-full h-full grid gap-4 items-center justify-center ${getGridClass(dailyParticipants.length)}`}>
-                
-                {dailyParticipants.length === 0 ? (
-                  <div className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center">
-                    {isVideoOn && localCameraStream && localCameraStream.getVideoTracks().length > 0 ? (
-                      <video
-                        autoPlay
-                        playsInline
-                        muted
-                        ref={(el) => {
-                          if (el && (!el.srcObject || el.srcObject !== localCameraStream)) {
-                            el.srcObject = localCameraStream;
-                            el.play().catch(() => {});
-                          }
-                        }}
-                        className="w-full h-full object-cover transform -scale-x-100"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center gap-3">
-                        <img src={currentUser.avatar} className="w-24 h-24 rounded-full ring-4 ring-indigo-500/40 object-cover" alt="" />
-                        <span className="text-sm font-bold text-white">{currentUser.name} (You)</span>
-                      </div>
-                    )}
-                    <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
-                      <span>{currentUser.name} (You)</span>
-                      <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
-                        {selectedLanguage}
-                      </span>
-                      {isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
-                    </div>
-                  </div>
-                ) : (
-                  dailyParticipants.map((p) => {
-                    const isLocal = p.local;
-                    const videoTrack = p.tracks?.video?.persistentTrack 
-                      || p.tracks?.video?.track 
-                      || (isLocal && localCameraStream ? localCameraStream.getVideoTracks()[0] : null);
-                    const isVideoActive = isVideoOn && (p.video || Boolean(videoTrack) || p.tracks?.video?.state === 'playable') && Boolean(videoTrack);
-                    const isTranslating = translatingSpeakers[p.session_id] || (isLocal && translatingSpeakers[socket.id]);
-                    const isDubbing = activeDubbingSpeaker === p.session_id;
-                    const isSpeaking = isLocal ? (!isMuted && volumeLevel > 0.05) : p.audio;
+              <div className={`w-full h-full grid gap-4 items-center justify-center ${getGridClass(displayParticipants.length)}`}>
+                {displayParticipants.map((p) => {
+                  const isLocal = p.isLocal;
+                  const videoTrack = p.videoTrack;
+                  const isVideoActive = isVideoOn && (isLocal ? (localCameraStream && localCameraStream.getVideoTracks().length > 0) : Boolean(videoTrack));
+                  const isTranslating = translatingSpeakers[p.id] || (isLocal && translatingSpeakers[socket.id]);
+                  const isDubbing = activeDubbingSpeaker === p.id;
+                  const isSpeaking = isLocal ? (!isMuted && volumeLevel > 0.05) : p.audio;
 
-                    let tileRingStyle = 'border border-white/10';
-                    if (isDubbing || isTranslating) {
-                      tileRingStyle = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.7)] animate-pulse';
-                    } else if (isSpeaking) {
-                      tileRingStyle = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.6)]';
-                    }
+                  let tileRingStyle = 'border border-white/10';
+                  if (isDubbing || isTranslating) {
+                    tileRingStyle = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.7)] animate-pulse';
+                  } else if (isSpeaking) {
+                    tileRingStyle = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.6)]';
+                  }
 
-                    return (
-                      <div
-                        key={p.session_id}
-                        className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center group transition-all duration-300 ${tileRingStyle}`}
-                      >
-                        {isVideoActive ? (
-                          <video
-                            autoPlay
-                            playsInline
-                            muted={isLocal}
-                            ref={(el) => {
-                              if (el && videoTrack && (!el.srcObject || el.srcObject.getVideoTracks()[0] !== videoTrack)) {
-                                el.srcObject = new MediaStream([videoTrack]);
+                  return (
+                    <div
+                      key={p.id}
+                      className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center group transition-all duration-300 ${tileRingStyle}`}
+                    >
+                      {isVideoActive ? (
+                        <video
+                          autoPlay
+                          playsInline
+                          muted={isLocal}
+                          ref={(el) => {
+                            if (el) {
+                              const targetStream = isLocal && localCameraStream ? localCameraStream : (videoTrack ? new MediaStream([videoTrack]) : null);
+                              if (targetStream && (!el.srcObject || el.srcObject !== targetStream)) {
+                                el.srcObject = targetStream;
                                 el.play().catch(() => {});
                               }
-                            }}
-                            className={`w-full h-full object-cover ${isLocal ? 'transform -scale-x-100' : ''}`}
-                          />
-                        ) : (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="w-24 h-24 rounded-full bg-indigo-950 border border-indigo-500/30 flex items-center justify-center text-3xl font-bold text-indigo-200">
-                              {p.user_name ? p.user_name.charAt(0).toUpperCase() : 'P'}
-                            </div>
-                            <span className="text-sm font-bold text-white">{p.user_name || 'Participant'} {isLocal ? '(You)' : ''}</span>
+                            }
+                          }}
+                          className={`w-full h-full object-cover ${isLocal ? 'transform -scale-x-100' : ''}`}
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-24 h-24 rounded-full bg-indigo-950 border border-indigo-500/30 flex items-center justify-center text-3xl font-bold text-indigo-200">
+                            {p.name ? p.name.charAt(0).toUpperCase() : 'P'}
                           </div>
-                        )}
+                          <span className="text-sm font-bold text-white">{p.name} {isLocal ? '(You)' : ''}</span>
+                        </div>
+                      )}
 
                         {/* Status Tag Overlay (Speaking vs Dubbing vs Translating) */}
                         <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10">
@@ -771,17 +803,15 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
                         {/* Name & Language Badge */}
                         <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
-                          <span>{p.user_name || 'Participant'} {isLocal ? '(You)' : ''}</span>
+                          <span>{p.name || 'Participant'} {isLocal ? '(You)' : ''}</span>
                           <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
-                            {isLocal ? selectedLanguage : 'en'}
+                            {isLocal ? selectedLanguage : (p.spokenLanguage || 'en')}
                           </span>
                           {!p.audio && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
                         </div>
                       </div>
                     );
-                  })
-                )}
-
+                  })}
               </div>
             );
           })()}
