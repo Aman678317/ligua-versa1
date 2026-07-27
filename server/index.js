@@ -430,34 +430,49 @@ io.on('connection', (socket) => {
 
   socket.on('speech-chunk', async (data) => {
     if (!currentRoomCode) return;
-    const { text, sourceLang, targetLang, speakerName, speakerId } = data;
+    const { text, audioBase64, sourceLang, targetLang, speakerName, speakerId } = data;
     const room = getRoom(currentRoomCode);
 
-    // Collect all unique target languages among room participants
-    const targetLangs = new Set();
-    if (targetLang) targetLangs.add(targetLang);
-    for (const participant of room.participants.values()) {
-      const pLang = participant.spokenLanguage || participant.targetLanguage;
-      if (pLang) targetLangs.add(pLang);
-    }
-    if (targetLangs.size === 0) targetLangs.add('en');
+    const actualSpeakerId = speakerId || socket.id;
+    const actualSpeakerName = speakerName || (currentUser ? currentUser.name : 'Participant');
+    const actualSourceLang = sourceLang || (currentUser ? currentUser.spokenLanguage : 'en') || 'en';
 
-    for (const tLang of targetLangs) {
+    // Notify room that AI translation/synthesis is in progress for this speaker
+    io.to(currentRoomCode).emit('speaker-translating-status', {
+      speakerId: actualSpeakerId,
+      speakerName: actualSpeakerName,
+      isTranslating: true
+    });
+
+    for (const [pSocketId, participant] of room.participants.entries()) {
+      const listenerLang = participant.spokenLanguage || participant.targetLanguage || targetLang || 'en';
       try {
         const translationResult = await processSpeechTranslation({
-          speakerId: speakerId || socket.id,
-          speakerName: speakerName || 'Participant',
-          text,
-          sourceLang: sourceLang || 'en',
-          targetLang: tLang
+          speakerId: actualSpeakerId,
+          speakerName: actualSpeakerName,
+          text: text || '',
+          audioBase64: audioBase64 || null,
+          sourceLang: actualSourceLang,
+          targetLang: listenerLang
         });
 
         room.liveCaptions.push(translationResult);
-        io.to(currentRoomCode).emit('live-caption-chunk', translationResult);
+
+        // Deliver translated caption & TTS specifically to this participant
+        io.to(pSocketId).emit('live-caption-chunk', translationResult);
       } catch (err) {
-        console.warn('[speech-chunk fanout error]', err);
+        console.warn('[speech-chunk error for participant]', pSocketId, err);
       }
     }
+
+    // Done translating status
+    setTimeout(() => {
+      io.to(currentRoomCode).emit('speaker-translating-status', {
+        speakerId: actualSpeakerId,
+        speakerName: actualSpeakerName,
+        isTranslating: false
+      });
+    }, 400);
   });
 
   // REAL CHAT AUTO-TRANSLATION PIPELINE

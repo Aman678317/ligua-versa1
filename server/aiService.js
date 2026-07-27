@@ -5,7 +5,7 @@ const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 /**
  * Process spoken text or audio chunk by invoking the Python AI service
  */
-export async function processSpeechTranslation({ speakerId, speakerName, text, sourceLang, targetLang }) {
+export async function processSpeechTranslation({ speakerId, speakerName, text, audioBase64, sourceLang, targetLang }) {
   const startTime = Date.now();
 
   try {
@@ -15,7 +15,8 @@ export async function processSpeechTranslation({ speakerId, speakerName, text, s
       body: JSON.stringify({
         speaker_id: speakerId,
         speaker_name: speakerName,
-        text,
+        text: text || '',
+        audio_base64: audioBase64 || null,
         source_lang: sourceLang || 'en',
         target_lang: targetLang || 'en'
       })

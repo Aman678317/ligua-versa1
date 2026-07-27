@@ -169,6 +169,9 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     };
   }, [roomCode, currentUser?.id]);
 
+  const [translatingSpeakers, setTranslatingSpeakers] = useState({});
+  const [activeDubbingSpeaker, setActiveDubbingSpeaker] = useState(null);
+
   // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
   useEffect(() => {
     const speechService = new SpeechTranslationService(
@@ -178,7 +181,13 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       currentUser.name
     );
     speechServiceRef.current = speechService;
-    speechService.start();
+    
+    // Pass local audio stream if available
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      speechService.start(stream);
+    }).catch(() => {
+      speechService.start();
+    });
 
     socket.emit('join-room', {
       roomCode,
@@ -191,16 +200,47 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       }
     });
 
+    socket.on('speaker-translating-status', ({ speakerId, isTranslating }) => {
+      setTranslatingSpeakers(prev => ({ ...prev, [speakerId]: isTranslating }));
+    });
+
     socket.on('live-caption-chunk', (caption) => {
       const synchronized = captionSyncRef.current.pushChunk(caption);
       setCurrentCaption(synchronized);
 
-      // Play synthesized translated audio stream for remote participant
+      // Play synthesized translated audio stream for remote participant with audio ducking
       if (caption.audioBase64 && caption.speakerId !== socket.id) {
         try {
+          const originalVol = userSettings?.originalVoiceVolume ?? 0.2;
+          
+          // 1. Duck original Daily speaker audio volume
+          if (dailyCallRef.current && caption.speakerId) {
+            try {
+              dailyCallRef.current.setAudioVolume(caption.speakerId, originalVol);
+            } catch (e) {}
+          }
+
+          setActiveDubbingSpeaker(caption.speakerId);
+
           const snd = new Audio(`data:audio/${caption.audioFormat || 'mp3'};base64,${caption.audioBase64}`);
-          snd.volume = 0.9;
-          snd.play().catch(e => console.warn('[TTS Playback Error]', e));
+          snd.volume = 0.95;
+
+          const restoreAudio = () => {
+            setActiveDubbingSpeaker(null);
+            if (dailyCallRef.current && caption.speakerId) {
+              try {
+                dailyCallRef.current.setAudioVolume(caption.speakerId, 1.0);
+              } catch (e) {}
+            }
+          };
+
+          snd.onended = restoreAudio;
+          snd.onerror = restoreAudio;
+
+          snd.play().catch(e => {
+            console.warn('[TTS Playback Error]', e);
+            restoreAudio();
+          });
         } catch (e) {
           console.warn('[Audio Playback Exception]', e);
         }
@@ -616,13 +656,21 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                   dailyParticipants.map((p) => {
                     const videoTrack = p.tracks?.video?.persistentTrack;
                     const isLocal = p.local;
+                    const isTranslating = translatingSpeakers[p.session_id] || (isLocal && translatingSpeakers[socket.id]);
+                    const isDubbing = activeDubbingSpeaker === p.session_id;
+                    const isSpeaking = isLocal ? (!isMuted && volumeLevel > 0.05) : p.audio;
+
+                    let tileRingStyle = 'border border-white/10';
+                    if (isDubbing || isTranslating) {
+                      tileRingStyle = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.7)] animate-pulse';
+                    } else if (isSpeaking) {
+                      tileRingStyle = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.6)]';
+                    }
 
                     return (
                       <div
                         key={p.session_id}
-                        className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center group ${
-                          !p.audio ? '' : 'ring-2 ring-[#00E5C7] shadow-cyan-500/30'
-                        }`}
+                        className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center group transition-all duration-300 ${tileRingStyle}`}
                       >
                         {p.video && videoTrack ? (
                           <video
@@ -645,11 +693,33 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                           </div>
                         )}
 
+                        {/* Status Tag Overlay (Speaking vs Dubbing vs Translating) */}
+                        <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10">
+                          {isDubbing && (
+                            <span className="bg-indigo-600/90 text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full border border-indigo-400/50 flex items-center gap-1 shadow-lg backdrop-blur-md animate-pulse">
+                              <Sparkles className="w-3 h-3 text-indigo-200 animate-spin-slow" />
+                              <span>VOICE DUBBING</span>
+                            </span>
+                          )}
+                          {!isDubbing && isTranslating && (
+                            <span className="bg-cyan-600/90 text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full border border-cyan-400/50 flex items-center gap-1 shadow-lg backdrop-blur-md">
+                              <Sparkles className="w-3 h-3 text-cyan-200 animate-spin" />
+                              <span>TRANSLATING...</span>
+                            </span>
+                          )}
+                          {!isDubbing && !isTranslating && isSpeaking && (
+                            <span className="bg-[#00E5C7]/90 text-slate-950 text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-md">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-ping"></span>
+                              <span>SPEAKING</span>
+                            </span>
+                          )}
+                        </div>
+
                         {/* Name & Language Badge */}
                         <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
                           <span>{p.user_name || 'Participant'} {isLocal ? '(You)' : ''}</span>
                           <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
-                            {isLocal ? selectedLanguage : 'ja'}
+                            {isLocal ? selectedLanguage : 'en'}
                           </span>
                           {!p.audio && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
                         </div>

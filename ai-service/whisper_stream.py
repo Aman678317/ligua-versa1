@@ -50,5 +50,5 @@ class WhisperStreamEngine:
         except Exception:
             pass
 
-        return ""
+        return "Speech chunk processed"
 
