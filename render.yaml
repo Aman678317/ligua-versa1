@@ -14,6 +14,8 @@ services:
         value: production
       - key: AI_SERVICE_URL
         value: https://linguaversa-ai-service.onrender.com
+      - key: DAILY_API_KEY
+        sync: false
 
   # 2. Python FastAPI AI Speech Translation Service
   - type: web

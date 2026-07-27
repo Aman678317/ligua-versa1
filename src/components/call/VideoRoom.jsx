@@ -78,7 +78,90 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [showQrModal, setShowQrModal] = useState(false);
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
-  // ...
+  // 1. FETCH EXISTING DAILY ROOM URL & JOIN (GET ONLY - NEVER RE-CREATE ON JOIN)
+  useEffect(() => {
+    let callObj = null;
+
+    const initDailyCall = async () => {
+      try {
+        let roomUrl = '';
+
+        // Check /api/calls/:sessionId first
+        const callRes = await fetch(`/api/calls/${roomCode}`).catch(() => null);
+        if (callRes && callRes.ok) {
+          const callData = await callRes.json();
+          if (callData.session && callData.session.dailyRoomUrl) {
+            roomUrl = callData.session.dailyRoomUrl;
+          }
+        }
+
+        // Check /api/meetings/:code if not found in call sessions
+        if (!roomUrl) {
+          const meetingRes = await fetch(`/api/meetings/${roomCode}`).catch(() => null);
+          if (meetingRes && meetingRes.ok) {
+            const meetingData = await meetingRes.json();
+            if (meetingData.meeting && meetingData.meeting.dailyRoomUrl) {
+              roomUrl = meetingData.meeting.dailyRoomUrl;
+            }
+          }
+        }
+
+        if (!roomUrl) {
+          const safeCode = roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
+          roomUrl = `https://linguaversa.daily.co/${safeCode}`;
+        }
+
+        setDailyRoomUrl(roomUrl);
+
+        callObj = DailyIframe.createCallObject({
+          subscribeToTracksAutomatically: true,
+        });
+        dailyCallRef.current = callObj;
+
+        const updateParticipants = () => {
+          if (!callObj) return;
+          const participantsMap = callObj.participants();
+          const list = Object.values(participantsMap);
+          setDailyParticipants(list);
+        };
+
+        callObj.on('joined-meeting', updateParticipants);
+        callObj.on('participant-joined', updateParticipants);
+        callObj.on('participant-updated', updateParticipants);
+        callObj.on('participant-left', updateParticipants);
+
+        await callObj.join({
+          url: roomUrl,
+          userName: currentUser.name || 'Participant'
+        });
+
+        console.log('[Daily.co] Joined Daily room successfully:', roomUrl);
+
+        const localStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        if (localStream) {
+          const mixer = new AudioMixer();
+          audioMixerRef.current = mixer;
+          mixer.initialize(localStream);
+        }
+      } catch (err) {
+        console.warn('[Daily.co Join Exception]', err);
+      }
+    };
+
+    initDailyCall();
+
+    return () => {
+      if (dailyCallRef.current) {
+        dailyCallRef.current.leave().catch(() => {});
+        dailyCallRef.current.destroy().catch(() => {});
+      }
+      if (audioMixerRef.current) {
+        audioMixerRef.current.stop();
+      }
+    };
+  }, [roomCode]);
+
+  // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
   useEffect(() => {
     const speechService = new SpeechTranslationService(
       socket,

@@ -232,15 +232,39 @@ app.post('/api/meetings', async (req, res) => {
 });
 
 app.get('/api/meetings/:code', async (req, res) => {
-  const meeting = mockMeetings.find(m => m.code === req.params.code) || {
-    id: `meeting-dynamic-${req.params.code}`,
-    code: req.params.code,
-    dailyRoomUrl: `https://linguaversa.daily.co/${req.params.code}`,
-    title: `Call (${req.params.code})`,
-    status: 'LIVE',
-    hostId: 'user-aman',
-    settings: { waitingRoomEnabled: false, isLocked: false, allowScreenShare: true, allowChat: true }
-  };
+  const code = req.params.code;
+  let meeting = mockMeetings.find(m => m.code === code);
+  
+  if (!meeting) {
+    // Check callSessions Map first
+    const session = callSessions.get(code);
+    if (session) {
+      return res.json({
+        success: true,
+        meeting: {
+          id: session.sessionId,
+          code: session.code,
+          dailyRoomUrl: session.dailyRoomUrl,
+          title: session.title,
+          status: session.status
+        }
+      });
+    }
+
+    // Create real Daily room once for this code and persist in mockMeetings
+    const dailyRoom = await createDailyRoom(code);
+    meeting = {
+      id: `meeting-dynamic-${code}`,
+      code: code,
+      dailyRoomUrl: dailyRoom.url,
+      title: `Call (${code})`,
+      status: 'LIVE',
+      hostId: 'user-aman',
+      settings: { waitingRoomEnabled: false, isLocked: false, allowScreenShare: true, allowChat: true }
+    };
+    mockMeetings.unshift(meeting);
+  }
+
   res.json({ success: true, meeting });
 });
 
@@ -581,4 +605,11 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`[LinguaVersa Server] Running on http://localhost:${PORT}`);
+  if (!process.env.DAILY_API_KEY) {
+    console.error('================================================================');
+    console.error('[CRITICAL BOOT ERROR] DAILY_API_KEY is NOT set in process.env!');
+    console.error('Video calls will fail to create authenticated Daily.co rooms.');
+    console.error('Please configure DAILY_API_KEY in your environment or Render dashboard.');
+    console.error('================================================================');
+  }
 });
