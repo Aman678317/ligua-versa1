@@ -48,6 +48,10 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [waitingRoomList, setWaitingRoomList] = useState([]);
   const [roomSettings, setRoomSettings] = useState({ isLocked: false, waitingRoomEnabled: false });
 
+  // Reconnect & Disconnect UI States
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [peerDisconnectedBanner, setPeerDisconnectedBanner] = useState(null);
+
   const [currentCaption, setCurrentCaption] = useState({
     id: 'c-init',
     speakerId: 'system',
@@ -63,9 +67,8 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const dailyCallRef = useRef(null);
   const speechServiceRef = useRef(null);
   const audioMixerRef = useRef(null);
-  const captionSyncRef = useRef(new CaptionSynchronizer(2500));
-
-  const shareableJoinUrl = `${window.location.origin}/meet/${roomCode}`;
+  const [showQrModal, setShowQrModal] = useState(false);
+  const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
   // 1. FETCH DAILY ROOM URL & INITIALIZE DAILY CALL OBJECT
   useEffect(() => {
@@ -191,8 +194,34 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       onLeaveCall();
     });
 
+    socket.on('disconnect', () => {
+      setIsReconnecting(true);
+    });
+
+    socket.on('connect', () => {
+      setIsReconnecting(false);
+      socket.emit('rejoin-session', {
+        roomCode,
+        user: { name: currentUser.name, spokenLanguage: selectedLanguage },
+        previousSocketId: socket.id
+      });
+    });
+
+    socket.on('peer-disconnected', ({ user }) => {
+      setPeerDisconnectedBanner(user?.name || 'Participant');
+    });
+
+    socket.on('peer-reconnected', () => {
+      setPeerDisconnectedBanner(null);
+    });
+
+    socket.on('peer-left', () => {
+      setPeerDisconnectedBanner(null);
+    });
+
     return () => {
       speechService.stop();
+      socket.emit('leave-session');
       socket.off('live-caption-chunk');
       socket.off('new-chat-message');
       socket.off('new-reaction');
@@ -200,6 +229,11 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       socket.off('poll-updated');
       socket.off('host-muted-you');
       socket.off('removed-by-host');
+      socket.off('disconnect');
+      socket.off('connect');
+      socket.off('peer-disconnected');
+      socket.off('peer-reconnected');
+      socket.off('peer-left');
     };
   }, [roomCode]);
 
@@ -284,6 +318,21 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       {/* Floating Emoji Reactions Overlay */}
       <EmojiReactionsOverlay floatingReactions={floatingReactions} />
 
+      {/* Reconnecting & Disconnect Status Banners */}
+      {isReconnecting && (
+        <div className="absolute top-0 inset-x-0 z-50 bg-amber-600/90 text-slate-950 px-4 py-2 text-xs font-extrabold text-center flex items-center justify-center gap-2 shadow-lg backdrop-blur-md">
+          <div className="w-3 h-3 rounded-full border-2 border-slate-950 border-t-transparent animate-spin"></div>
+          <span>Connection lost. Reconnecting to call...</span>
+        </div>
+      )}
+
+      {peerDisconnectedBanner && !isReconnecting && (
+        <div className="absolute top-0 inset-x-0 z-50 bg-cyan-600/90 text-white px-4 py-2 text-xs font-bold text-center flex items-center justify-center gap-2 shadow-lg backdrop-blur-md">
+          <AlertCircle className="w-4 h-4 text-cyan-200 animate-pulse" />
+          <span>{peerDisconnectedBanner} lost connection. Waiting for them to reconnect (60s grace period)...</span>
+        </div>
+      )}
+
       {/* Main Video Call Content Area */}
       <div className="flex-1 flex flex-col relative h-full overflow-hidden z-10">
         
@@ -319,6 +368,14 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             title="Share on WhatsApp"
           >
             <Share2 className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => setShowQrModal(true)}
+            className="px-2.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition-all"
+            title="Scan QR Code to Join"
+          >
+            QR
           </button>
 
           <div className="flex items-center gap-1 bg-[#0A0E1A]/80 backdrop-blur-md p-1 rounded-xl border border-white/10">
@@ -517,7 +574,10 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             </button>
 
             <button
-              onClick={onLeaveCall}
+              onClick={() => {
+                socket.emit('leave-session');
+                onLeaveCall();
+              }}
               className="px-5 py-3 rounded-2xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-rose-600/30 transition-all"
             >
               <PhoneOff className="w-4 h-4" />
@@ -560,6 +620,40 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         onCreatePoll={({ question, options }) => socket.emit('create-poll', { question, options })}
         onVotePoll={(pollId, optionId) => socket.emit('vote-poll', { pollId, optionId })}
       />
+
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-[#0A0E1A] border border-white/10 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
+            <h3 className="text-lg font-bold text-white">Scan QR Code to Join</h3>
+            <p className="text-xs text-slate-400">Scan this code with a mobile camera to open the call join link directly.</p>
+            
+            <div className="p-4 bg-white rounded-2xl inline-block shadow-inner">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareableJoinUrl)}`}
+                alt="Call QR Code"
+                className="w-44 h-44 mx-auto"
+              />
+            </div>
+
+            <p className="text-[11px] font-mono text-cyan-300 break-all bg-slate-900/80 p-2 rounded-xl border border-white/5">
+              {shareableJoinUrl}
+            </p>
+
+            <button
+              onClick={handleCopyLink}
+              className="w-full py-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 border border-cyan-500/30 text-xs font-bold transition-all"
+            >
+              {copiedLink ? 'Copied Link!' : 'Copy Join Link'}
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

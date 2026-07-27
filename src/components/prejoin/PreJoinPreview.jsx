@@ -6,7 +6,7 @@ import {
 import PermissionBanner from '../call/PermissionBanner';
 import { AudioMixer } from '../../utils/AudioMixer';
 
-export default function PreJoinPreview({ roomCode, currentUser, selectedLanguage, setSelectedLanguage, languages, onJoinCall, onCancel }) {
+export default function PreJoinPreview({ roomCode, currentUser, sessionStatus = 'VALID', selectedLanguage, setSelectedLanguage, languages, onJoinCall, onCancel }) {
   // Media State
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
@@ -117,6 +117,50 @@ export default function PreJoinPreview({ roomCode, currentUser, selectedLanguage
     const finalName = guestName.trim() || 'Guest Participant';
     onJoinCall(roomCode, { name: finalName, spokenLanguage: selectedLanguage });
   };
+
+  if (sessionStatus === 'LOADING') {
+    return (
+      <div className="min-h-[calc(100vh-4rem)] bg-[#05060B] flex items-center justify-center p-4 sm:p-8 font-sans">
+        <div className="max-w-md w-full p-8 bg-[#0A0E1A]/90 backdrop-blur-xl rounded-3xl border border-white/10 text-center space-y-6 shadow-2xl">
+          <div className="w-12 h-12 rounded-full border-4 border-cyan-500 border-t-transparent animate-spin mx-auto"></div>
+          <div>
+            <h2 className="text-xl font-bold text-white">Validating Call Link...</h2>
+            <p className="text-xs text-slate-400 mt-2">Checking session status and room availability.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (sessionStatus && sessionStatus !== 'VALID') {
+    const errorMessages = {
+      EXPIRED: { title: 'Call Link Expired', desc: 'This call link is no longer active (links expire after 24 hours).' },
+      FULL: { title: 'Call is Full', desc: 'This call already has the maximum 2 participants connected.' },
+      ENDED: { title: 'Call Has Ended', desc: 'This call session has already concluded.' },
+      INVALID: { title: 'Invalid Call Link', desc: 'The requested call session link does not exist.' }
+    };
+    const info = errorMessages[sessionStatus] || errorMessages.INVALID;
+
+    return (
+      <div className="min-h-[calc(100vh-4rem)] bg-[#05060B] flex items-center justify-center p-4 sm:p-8 font-sans">
+        <div className="max-w-md w-full p-8 bg-[#0A0E1A]/90 backdrop-blur-xl rounded-3xl border border-white/10 text-center space-y-6 shadow-2xl">
+          <div className="w-16 h-16 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/30">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-extrabold text-white">{info.title}</h2>
+            <p className="text-xs text-slate-400 mt-2">{info.desc}</p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs shadow-lg transition-all"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#05060B] flex items-center justify-center p-4 sm:p-8 font-sans selection:bg-[#00E5C7] selection:text-slate-950">

@@ -44,16 +44,35 @@ export default function App() {
   const [summaries, setSummaries] = useState(mockSummaries);
   const [analytics, setAnalytics] = useState(mockAnalytics);
   const [contacts, setContacts] = useState(mockUsers);
+  const [sessionStatus, setSessionStatus] = useState('VALID'); // 'VALID' | 'EXPIRED' | 'FULL' | 'ENDED' | 'INVALID'
 
-  // Check URL pathname for direct join link e.g. /meet/lingua-382-991
+  // Check URL pathname for direct join link e.g. /join/call-xxx or /meet/lingua-382-991
   useEffect(() => {
     const path = window.location.pathname;
-    if (path.startsWith('/meet/')) {
-      const code = path.replace('/meet/', '').trim();
-      if (code) {
-        setActiveRoomCode(code);
-        setActiveTab('prejoin');
-      }
+    let code = '';
+
+    if (path.startsWith('/join/')) {
+      code = path.replace('/join/', '').trim();
+    } else if (path.startsWith('/meet/')) {
+      code = path.replace('/meet/', '').trim();
+    }
+
+    if (code) {
+      setActiveRoomCode(code);
+      setActiveTab('prejoin');
+      setSessionStatus('LOADING');
+
+      // Validate call session
+      fetch(`/api/calls/${code}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status) {
+            setSessionStatus(data.status);
+          } else {
+            setSessionStatus('VALID');
+          }
+        })
+        .catch(() => setSessionStatus('VALID'));
     }
   }, []);
 
@@ -82,32 +101,64 @@ export default function App() {
 
   // Handlers
   const handleStartInstantCall = async () => {
-    const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
-    
     try {
-      const res = await fetch('/api/meetings', {
+      const res = await fetch('/api/calls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Instant Video Call' })
+        body: JSON.stringify({ hostId: currentUser.id, title: 'Instant Translated Call' })
       });
       const data = await res.json();
-      const finalCode = data?.meeting?.code || code;
+      const sessionId = data?.sessionId || `call-${Date.now()}`;
       
-      setActiveRoomCode(finalCode);
+      setActiveRoomCode(sessionId);
+      setSessionStatus('VALID');
       setActiveTab('prejoin');
-      window.history.pushState({}, '', `/meet/${finalCode}`);
+      window.history.pushState({}, '', `/join/${sessionId}`);
     } catch (e) {
-      setActiveRoomCode(code);
+      const fallbackCode = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+      setActiveRoomCode(fallbackCode);
+      setSessionStatus('VALID');
       setActiveTab('prejoin');
-      window.history.pushState({}, '', `/meet/${code}`);
+      window.history.pushState({}, '', `/join/${fallbackCode}`);
     }
   };
 
   const handleCreateForLater = async () => {
-    const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
-    const newMeeting = {
-      id: `meeting-${Date.now()}`,
-      code,
+    try {
+      const res = await fetch('/api/calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostId: currentUser.id, title: 'Scheduled Call Link' })
+      });
+      const data = await res.json();
+      const sessionId = data?.sessionId || `call-${Date.now()}`;
+
+      const newMeeting = {
+        id: `meeting-${Date.now()}`,
+        code: sessionId,
+        title: 'Scheduled Call for Later',
+        description: 'Share this link with participants to join later',
+        status: 'SCHEDULED',
+        hostId: currentUser.id,
+        scheduledStart: new Date(Date.now() + 3600000).toISOString()
+      };
+      setMeetings((prev) => [newMeeting, ...prev]);
+      setCreatedMeeting(newMeeting);
+    } catch (e) {
+      const code = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+      const newMeeting = {
+        id: `meeting-${Date.now()}`,
+        code,
+        title: 'Scheduled Call for Later',
+        description: 'Share this link with participants to join later',
+        status: 'SCHEDULED',
+        hostId: currentUser.id,
+        scheduledStart: new Date(Date.now() + 3600000).toISOString()
+      };
+      setMeetings((prev) => [newMeeting, ...prev]);
+      setCreatedMeeting(newMeeting);
+    }
+  };
       title: 'Scheduled Call for Later',
       description: 'Share this link with participants to join later',
       status: 'SCHEDULED',
@@ -177,6 +228,7 @@ export default function App() {
           <PreJoinPreview
             roomCode={activeRoomCode}
             currentUser={currentUser}
+            sessionStatus={sessionStatus}
             selectedLanguage={selectedLanguage}
             setSelectedLanguage={setSelectedLanguage}
             languages={languages}

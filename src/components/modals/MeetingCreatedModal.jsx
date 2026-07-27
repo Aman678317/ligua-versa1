@@ -6,7 +6,7 @@ export default function MeetingCreatedModal({ isOpen, onClose, meeting, onJoinCa
 
   if (!isOpen || !meeting) return null;
 
-  const meetingUrl = `${window.location.origin}/meet/${meeting.code}`;
+  const meetingUrl = `${window.location.origin}/join/${meeting.code}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(meetingUrl);

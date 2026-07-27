@@ -20,6 +20,8 @@ const io = new Server(httpServer, {
 
 // In-Memory Realtime Room State
 const rooms = new Map();
+const callSessions = new Map();
+const disconnectTimers = new Map();
 
 function getRoom(meetingCode) {
   if (!rooms.has(meetingCode)) {
@@ -27,6 +29,7 @@ function getRoom(meetingCode) {
       code: meetingCode,
       isLocked: false,
       waitingRoomEnabled: false,
+      maxParticipants: 2,
       participants: new Map(),
       waitingRoom: new Map(),
       messages: [],
@@ -43,8 +46,8 @@ app.get('/', (req, res) => {
   res.json({
     status: 'online',
     service: 'LinguaVersa Realtime Backend Server',
-    version: '1.1.0',
-    endpoints: ['/api/languages', '/api/meetings', '/api/summaries', '/api/analytics', '/api/contacts', '/api/daily/room']
+    version: '1.2.0',
+    endpoints: ['/api/languages', '/api/meetings', '/api/calls', '/api/summaries', '/api/analytics', '/api/contacts', '/api/daily/room']
   });
 });
 
@@ -58,6 +61,106 @@ app.post('/api/daily/room', async (req, res) => {
 // REST API Endpoints
 app.get('/api/languages', (req, res) => {
   res.json({ success: true, languages: mockLanguages });
+});
+
+// Shareable Call Session Endpoints (/api/calls)
+app.post('/api/calls', async (req, res) => {
+  const { hostId, title } = req.body;
+  const sessionId = `call-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h expiry
+  
+  const dailyRoom = await createDailyRoom(sessionId);
+
+  const session = {
+    sessionId,
+    code: sessionId,
+    dailyRoomUrl: dailyRoom.url,
+    title: title || 'Instant Translated Video Call',
+    status: 'WAITING', // WAITING, ACTIVE, ENDED
+    hostId: hostId || 'user-aman',
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    maxParticipants: 2,
+    participantsCount: 0
+  };
+
+  callSessions.set(sessionId, session);
+  res.json({
+    success: true,
+    sessionId,
+    code: sessionId,
+    joinUrl: `/join/${sessionId}`,
+    expiresAt,
+    session
+  });
+});
+
+app.get('/api/calls/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const session = callSessions.get(sessionId);
+
+  if (!session) {
+    // Fallback: check if it matches a standard meeting code
+    const meeting = mockMeetings.find(m => m.code === sessionId);
+    if (meeting) {
+      return res.json({
+        success: true,
+        valid: true,
+        status: 'VALID',
+        session: {
+          sessionId: meeting.code,
+          code: meeting.code,
+          title: meeting.title,
+          status: 'ACTIVE',
+          maxParticipants: 2
+        }
+      });
+    }
+
+    return res.status(404).json({
+      success: false,
+      valid: false,
+      status: 'INVALID',
+      message: 'This call session does not exist.'
+    });
+  }
+
+  // Check 24-hour expiration
+  if (new Date() > new Date(session.expiresAt)) {
+    session.status = 'EXPIRED';
+    return res.json({
+      success: false,
+      valid: false,
+      status: 'EXPIRED',
+      message: 'This call link has expired.'
+    });
+  }
+
+  if (session.status === 'ENDED') {
+    return res.json({
+      success: false,
+      valid: false,
+      status: 'ENDED',
+      message: 'This call has already ended.'
+    });
+  }
+
+  const room = rooms.get(sessionId);
+  if (room && room.participants.size >= session.maxParticipants) {
+    return res.json({
+      success: true,
+      valid: false,
+      status: 'FULL',
+      message: 'This call is currently full (maximum 2 participants).'
+    });
+  }
+
+  res.json({
+    success: true,
+    valid: true,
+    status: 'VALID',
+    session
+  });
 });
 
 app.get('/api/meetings', (req, res) => {
@@ -134,6 +237,13 @@ io.on('connection', (socket) => {
     currentUser = user;
     const room = getRoom(roomCode);
 
+    // Max 2 participant check for shareable call sessions
+    if (room.participants.size >= (room.maxParticipants || 2) && !room.participants.has(socket.id)) {
+      socket.emit('error-message', { message: 'This call is currently full (maximum 2 participants).' });
+      socket.emit('room-status', { status: 'FULL' });
+      return;
+    }
+
     if (room.waitingRoomEnabled && !user.isHost) {
       room.waitingRoom.set(socket.id, { socketId: socket.id, ...user });
       socket.join(`${roomCode}-waiting`);
@@ -149,6 +259,13 @@ io.on('connection', (socket) => {
 
     socket.join(roomCode);
     room.participants.set(socket.id, { socketId: socket.id, ...user });
+
+    // Update session status to ACTIVE
+    if (callSessions.has(roomCode)) {
+      const session = callSessions.get(roomCode);
+      session.status = 'ACTIVE';
+      session.participantsCount = room.participants.size;
+    }
 
     io.to(roomCode).emit('room-participants-update', Array.from(room.participants.values()));
     socket.emit('room-chat-history', room.messages);
@@ -327,15 +444,88 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Reconnect Session Handler
+  socket.on('rejoin-session', ({ roomCode, user, previousSocketId }) => {
+    currentRoomCode = roomCode;
+    currentUser = user;
+    const room = getRoom(roomCode);
+
+    // Clear grace period timer if active
+    if (previousSocketId && disconnectTimers.has(previousSocketId)) {
+      clearTimeout(disconnectTimers.get(previousSocketId));
+      disconnectTimers.delete(previousSocketId);
+      room.participants.delete(previousSocketId);
+    }
+
+    socket.join(roomCode);
+    room.participants.set(socket.id, { socketId: socket.id, ...user, status: 'CONNECTED' });
+
+    if (callSessions.has(roomCode)) {
+      const session = callSessions.get(roomCode);
+      session.status = 'ACTIVE';
+    }
+
+    socket.emit('rejoin-accepted', {
+      status: 'REJOINED',
+      participants: Array.from(room.participants.values()),
+      messages: room.messages,
+      polls: room.polls
+    });
+
+    socket.to(roomCode).emit('peer-reconnected', { socketId: socket.id, user });
+    io.to(roomCode).emit('room-participants-update', Array.from(room.participants.values()));
+  });
+
+  // Explicit Leave Session Handler (Deliberate Hangup)
+  socket.on('leave-session', () => {
+    if (!currentRoomCode) return;
+    const room = getRoom(currentRoomCode);
+    
+    if (disconnectTimers.has(socket.id)) {
+      clearTimeout(disconnectTimers.get(socket.id));
+      disconnectTimers.delete(socket.id);
+    }
+
+    room.participants.delete(socket.id);
+    room.waitingRoom.delete(socket.id);
+
+    if (room.participants.size === 0 && callSessions.has(currentRoomCode)) {
+      callSessions.get(currentRoomCode).status = 'ENDED';
+    }
+
+    socket.to(currentRoomCode).emit('peer-left', { socketId: socket.id, reason: 'explicit-hangup' });
+    io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants.values()));
+    socket.leave(currentRoomCode);
+  });
+
   socket.on('disconnect', () => {
     if (currentRoomCode) {
       const room = getRoom(currentRoomCode);
-      room.participants.delete(socket.id);
-      room.waitingRoom.delete(socket.id);
+      const leavingUser = currentUser;
 
-      io.to(currentRoomCode).emit('user-left', { socketId: socket.id });
-      io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants.values()));
-      io.to(currentRoomCode).emit('waiting-room-update', Array.from(room.waitingRoom.values()));
+      // Notify peer that connection was lost temporarily
+      socket.to(currentRoomCode).emit('peer-disconnected', {
+        socketId: socket.id,
+        user: leavingUser,
+        gracePeriodSec: 60
+      });
+
+      // Start 60-second grace period timer before declaring participant permanently left
+      const timer = setTimeout(() => {
+        disconnectTimers.delete(socket.id);
+        room.participants.delete(socket.id);
+        room.waitingRoom.delete(socket.id);
+
+        if (room.participants.size === 0 && callSessions.has(currentRoomCode)) {
+          callSessions.get(currentRoomCode).status = 'ENDED';
+        }
+
+        io.to(currentRoomCode).emit('peer-left', { socketId: socket.id, reason: 'grace-period-expired' });
+        io.to(currentRoomCode).emit('room-participants-update', Array.from(room.participants.values()));
+        io.to(currentRoomCode).emit('waiting-room-update', Array.from(room.waitingRoom.values()));
+      }, 60000);
+
+      disconnectTimers.set(socket.id, timer);
     }
   });
 });
