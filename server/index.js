@@ -654,9 +654,11 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-  console.log(`[LinguaVersa Server] Running on http://localhost:${PORT}`);
+const rawPort = parseInt(process.env.PORT, 10);
+const PORT = !isNaN(rawPort) && rawPort > 0 ? rawPort : 3001;
+
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[LinguaVersa Server] Running on port ${PORT}`);
   if (!process.env.DAILY_API_KEY) {
     console.error('================================================================');
     console.error('[CRITICAL BOOT ERROR] DAILY_API_KEY is NOT set in process.env!');
