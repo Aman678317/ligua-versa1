@@ -33,6 +33,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [dailyParticipants, setDailyParticipants] = useState([]);
   const [dailyRoomUrl, setDailyRoomUrl] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [localCameraStream, setLocalCameraStream] = useState(null);
 
   // Drawers & Modals
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -137,16 +138,25 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         callObj.on('participant-joined', updateParticipants);
         callObj.on('participant-updated', updateParticipants);
         callObj.on('participant-left', updateParticipants);
+        callObj.on('track-started', updateParticipants);
+        callObj.on('track-stopped', updateParticipants);
 
         await callObj.join({
           url: roomUrl,
-          userName: currentUser.name || 'Participant'
+          userName: currentUser.name || 'Participant',
+          startVideoOff: false,
+          startAudioOff: false
         });
 
+        await callObj.setLocalVideo(true).catch(() => {});
         console.log('[Daily.co] Joined Daily room successfully:', roomUrl);
 
-        const localStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => {
+          return navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        });
+
         if (localStream) {
+          setLocalCameraStream(localStream);
           const mixer = new AudioMixer();
           audioMixerRef.current = mixer;
           mixer.initialize(localStream);
@@ -162,6 +172,9 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
       if (dailyCallRef.current) {
         dailyCallRef.current.leave().catch(() => {});
         dailyCallRef.current.destroy().catch(() => {});
+      }
+      if (localCameraStream) {
+        localCameraStream.getTracks().forEach(t => t.stop());
       }
       if (audioMixerRef.current) {
         audioMixerRef.current.stop();
@@ -342,17 +355,25 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
 
   // Daily Media Control Buttons
   const toggleMute = () => {
+    const nextMute = !isMuted;
     if (dailyCallRef.current) {
-      dailyCallRef.current.setLocalAudio(isMuted);
+      dailyCallRef.current.setLocalAudio(!nextMute).catch(() => {});
     }
-    setIsMuted(!isMuted);
+    if (localCameraStream) {
+      localCameraStream.getAudioTracks().forEach(t => { t.enabled = !nextMute; });
+    }
+    setIsMuted(nextMute);
   };
 
   const toggleVideo = () => {
+    const nextVideoState = !isVideoOn;
     if (dailyCallRef.current) {
-      dailyCallRef.current.setLocalVideo(!isVideoOn);
+      dailyCallRef.current.setLocalVideo(nextVideoState).catch(() => {});
     }
-    setIsVideoOn(!isVideoOn);
+    if (localCameraStream) {
+      localCameraStream.getVideoTracks().forEach(t => { t.enabled = nextVideoState; });
+    }
+    setIsVideoOn(nextVideoState);
   };
 
   const toggleScreenShare = async () => {
@@ -603,11 +624,15 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                   {/* Camera Thumbnails Strip */}
                   <div className="w-full flex items-center justify-center gap-3 overflow-x-auto py-1">
                     {dailyParticipants.map((p) => {
-                      const videoTrack = p.tracks?.video?.persistentTrack;
                       const isLocal = p.local;
+                      const videoTrack = p.tracks?.video?.persistentTrack 
+                        || p.tracks?.video?.track 
+                        || (isLocal && localCameraStream ? localCameraStream.getVideoTracks()[0] : null);
+                      const isVideoActive = isVideoOn && (p.video || Boolean(videoTrack) || p.tracks?.video?.state === 'playable') && Boolean(videoTrack);
+
                       return (
                         <div key={p.session_id} className="relative w-36 h-24 bg-[#0A0E1A]/90 backdrop-blur-md rounded-xl overflow-hidden border border-white/10 flex-shrink-0 flex items-center justify-center">
-                          {p.video && videoTrack ? (
+                          {isVideoActive ? (
                             <video
                               autoPlay
                               playsInline
@@ -615,6 +640,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                               ref={(el) => {
                                 if (el && videoTrack && (!el.srcObject || el.srcObject.getVideoTracks()[0] !== videoTrack)) {
                                   el.srcObject = new MediaStream([videoTrack]);
+                                  el.play().catch(() => {});
                                 }
                               }}
                               className={`w-full h-full object-cover ${isLocal ? 'transform -scale-x-100' : ''}`}
@@ -647,15 +673,40 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                 
                 {dailyParticipants.length === 0 ? (
                   <div className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <img src={currentUser.avatar} className="w-24 h-24 rounded-full ring-4 ring-indigo-500/40 object-cover" alt="" />
-                      <span className="text-sm font-bold text-white">{currentUser.name} (You)</span>
+                    {isVideoOn && localCameraStream && localCameraStream.getVideoTracks().length > 0 ? (
+                      <video
+                        autoPlay
+                        playsInline
+                        muted
+                        ref={(el) => {
+                          if (el && (!el.srcObject || el.srcObject !== localCameraStream)) {
+                            el.srcObject = localCameraStream;
+                            el.play().catch(() => {});
+                          }
+                        }}
+                        className="w-full h-full object-cover transform -scale-x-100"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <img src={currentUser.avatar} className="w-24 h-24 rounded-full ring-4 ring-indigo-500/40 object-cover" alt="" />
+                        <span className="text-sm font-bold text-white">{currentUser.name} (You)</span>
+                      </div>
+                    )}
+                    <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
+                      <span>{currentUser.name} (You)</span>
+                      <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase font-bold">
+                        {selectedLanguage}
+                      </span>
+                      {isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
                     </div>
                   </div>
                 ) : (
                   dailyParticipants.map((p) => {
-                    const videoTrack = p.tracks?.video?.persistentTrack;
                     const isLocal = p.local;
+                    const videoTrack = p.tracks?.video?.persistentTrack 
+                      || p.tracks?.video?.track 
+                      || (isLocal && localCameraStream ? localCameraStream.getVideoTracks()[0] : null);
+                    const isVideoActive = isVideoOn && (p.video || Boolean(videoTrack) || p.tracks?.video?.state === 'playable') && Boolean(videoTrack);
                     const isTranslating = translatingSpeakers[p.session_id] || (isLocal && translatingSpeakers[socket.id]);
                     const isDubbing = activeDubbingSpeaker === p.session_id;
                     const isSpeaking = isLocal ? (!isMuted && volumeLevel > 0.05) : p.audio;
@@ -672,7 +723,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                         key={p.session_id}
                         className={`relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center group transition-all duration-300 ${tileRingStyle}`}
                       >
-                        {p.video && videoTrack ? (
+                        {isVideoActive ? (
                           <video
                             autoPlay
                             playsInline
@@ -680,6 +731,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                             ref={(el) => {
                               if (el && videoTrack && (!el.srcObject || el.srcObject.getVideoTracks()[0] !== videoTrack)) {
                                 el.srcObject = new MediaStream([videoTrack]);
+                                el.play().catch(() => {});
                               }
                             }}
                             className={`w-full h-full object-cover ${isLocal ? 'transform -scale-x-100' : ''}`}

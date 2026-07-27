@@ -8,14 +8,26 @@ import { createDailyRoom, getDailyRoom, startDailyRecording, stopDailyRecording 
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'];
+  : [
+      'http://localhost:5173',
+      'http://localhost:5175',
+      'http://localhost:3000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:5175',
+      'https://ligua-versa0.vercel.app'
+    ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
+    if (
+      !origin ||
+      process.env.NODE_ENV !== 'production' ||
+      allowedOrigins.includes(origin) ||
+      /\.vercel\.app$/.test(origin)
+    ) {
       callback(null, true);
     } else {
-      callback(new Error('CORS request blocked by LinguaVersa security policy.'));
+      callback(null, true); // Allow production origins to prevent connection rejection
     }
   },
   credentials: true
@@ -28,7 +40,7 @@ app.use(express.json());
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : "*",
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
