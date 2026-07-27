@@ -159,15 +159,6 @@ export default function App() {
       setCreatedMeeting(newMeeting);
     }
   };
-      title: 'Scheduled Call for Later',
-      description: 'Share this link with participants to join later',
-      status: 'SCHEDULED',
-      hostId: currentUser.id,
-      scheduledStart: new Date(Date.now() + 3600000).toISOString()
-    };
-    setMeetings((prev) => [newMeeting, ...prev]);
-    setCreatedMeeting(newMeeting);
-  };
 
   const handleJoinCall = (code) => {
     const cleanCode = code || 'global-sync-892';
