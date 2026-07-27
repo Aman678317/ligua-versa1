@@ -32,13 +32,14 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(() => {
     let storedId = localStorage.getItem('linguaversa_user_id');
+    let storedName = localStorage.getItem('linguaversa_user_name');
     if (!storedId) {
-      storedId = `user-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().substring(0, 8) : Math.random().toString(36).substring(2, 10)}`;
+      storedId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 10);
       localStorage.setItem('linguaversa_user_id', storedId);
     }
     return {
       id: storedId,
-      name: 'Aman Sharma',
+      name: storedName || '',
       email: `${storedId}@linguaversa.io`,
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
       defaultLang: 'en'
@@ -177,6 +178,7 @@ export default function App() {
   const handleConfirmJoinFromGreenroom = (roomCode, participantDetails) => {
     if (participantDetails?.name) {
       setCurrentUser(prev => ({ ...prev, name: participantDetails.name }));
+      localStorage.setItem('linguaversa_user_name', participantDetails.name);
     }
     setActiveRoomCode(roomCode);
     setActiveTab('call');

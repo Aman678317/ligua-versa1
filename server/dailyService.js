@@ -1,24 +1,48 @@
 // Daily.co Managed Video Infrastructure REST API Client
 const DAILY_API_URL = 'https://api.daily.co/v1/rooms';
 
+const sanitizeRoomCode = (roomCode) => {
+  return roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
+};
+
+export async function getDailyRoom(roomCode) {
+  const apiKey = process.env.DAILY_API_KEY;
+  if (!apiKey) {
+    return { success: false, url: null, degraded: true };
+  }
+
+  const roomName = sanitizeRoomCode(roomCode);
+  try {
+    const response = await fetch(`${DAILY_API_URL}/${roomName}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return { success: true, url: data.url, name: data.name };
+    }
+    return { success: false, error: 'Room not found' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 export async function createDailyRoom(roomCode) {
   const apiKey = process.env.DAILY_API_KEY;
 
   if (!apiKey) {
     console.error('================================================================');
-    console.error('[CRITICAL WARNING] DAILY_API_KEY is NOT configured!');
-    console.error('All Daily video rooms will default to unauthenticated fallback URLs.');
-    console.error('Cross-device calling requires DAILY_API_KEY to be set in environment variables.');
+    console.error('[CRITICAL ERROR] DAILY_API_KEY is NOT configured!');
+    console.error('Video calls will NOT connect across devices until it is set.');
     console.error('================================================================');
-    const safeCode = roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
     return {
-      success: true,
-      url: `https://linguaversa.daily.co/${safeCode}`,
-      name: safeCode
+      success: false,
+      url: 'https://linguaversa.daily.co/fallback-room', // placeholder
+      degraded: true
     };
   }
 
-  const roomName = roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
+  const roomName = sanitizeRoomCode(roomCode);
 
   try {
     const exp = Math.floor(Date.now() / 1000) + 7200; // 2 hour room expiration
@@ -46,34 +70,25 @@ export async function createDailyRoom(roomCode) {
       return { success: true, url: data.url, name: data.name };
     }
 
-    // Defense in depth: If room already exists, fetch the existing room's REAL URL
+    // If Daily's create-room API call fails because the room already exists
+    // fetch the EXISTING room via GET and return its real url
     console.warn(`[Daily.co] Room creation notice (${response.status}):`, data.error || data.info || data);
-    try {
-      const fetchExisting = await fetch(`${DAILY_API_URL}/${roomName}`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-      });
-      if (fetchExisting.ok) {
-        const existingData = await fetchExisting.json();
-        if (existingData && existingData.url) {
-          console.log(`[Daily.co] Retrieved existing real room URL: ${existingData.url}`);
-          return { success: true, url: existingData.url, name: existingData.name };
-        }
-      }
-    } catch (fetchErr) {
-      console.warn('[Daily.co] Could not fetch existing room details:', fetchErr);
+
+    const existingRoom = await getDailyRoom(roomCode);
+    if (existingRoom.success) {
+      console.log(`[Daily.co] Retrieved existing real room URL: ${existingRoom.url}`);
+      return { success: true, url: existingRoom.url, name: existingRoom.name };
     }
 
     return {
-      success: true,
-      url: `https://linguaversa.daily.co/${roomName}`,
-      name: roomName
+      success: false,
+      error: 'Failed to create or fetch room'
     };
   } catch (err) {
     console.error('[Daily.co Room Creation Error]', err);
     return {
-      success: true,
-      url: `https://linguaversa.daily.co/${roomName}`,
-      name: roomName
+      success: false,
+      error: err.message
     };
   }
 }
