@@ -350,6 +350,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             
             {dailyParticipants.length === 0 ? (
               <div className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center">
+                {/* Local Fallback Tile when Daily joining */}
                 <div className="flex flex-col items-center gap-3">
                   <img src={currentUser.avatar} className="w-24 h-24 rounded-full ring-4 ring-indigo-500/40 object-cover" alt="" />
                   <span className="text-sm font-bold text-white">{currentUser.name} (You)</span>
