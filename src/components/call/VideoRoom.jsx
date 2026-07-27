@@ -587,10 +587,15 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
               );
             }
 
+            const getGridClass = (count) => {
+              if (count <= 1) return 'grid-cols-1 max-w-2xl';
+              if (count === 2) return 'grid-cols-1 md:grid-cols-2 max-w-5xl';
+              if (count === 3) return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-6xl';
+              return 'grid-cols-2 lg:grid-cols-2 max-w-5xl';
+            };
+
             return (
-              <div className={`w-full h-full max-w-6xl grid gap-4 items-center justify-center ${
-                dailyParticipants.length <= 1 ? 'grid-cols-1 max-w-2xl' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-2'
-              }`}>
+              <div className={`w-full h-full grid gap-4 items-center justify-center ${getGridClass(dailyParticipants.length)}`}>
                 
                 {dailyParticipants.length === 0 ? (
                   <div className="relative w-full h-full min-h-[260px] max-h-[360px] bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center">

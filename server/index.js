@@ -33,6 +33,9 @@ const io = new Server(httpServer, {
   }
 });
 
+// Configurable Group Call Room Capacity
+const MAX_ROOM_PARTICIPANTS = 4;
+
 // In-Memory Realtime Room State
 const rooms = new Map();
 const callSessions = new Map();
@@ -44,7 +47,7 @@ function getRoom(meetingCode) {
       code: meetingCode,
       isLocked: false,
       waitingRoomEnabled: false,
-      maxParticipants: 2,
+      maxParticipants: MAX_ROOM_PARTICIPANTS,
       participants: new Map(),
       waitingRoom: new Map(),
       messages: [],
@@ -116,7 +119,7 @@ app.post('/api/calls', async (req, res) => {
     hostId: hostId || 'user-aman',
     createdAt: new Date().toISOString(),
     expiresAt,
-    maxParticipants: 2,
+    maxParticipants: MAX_ROOM_PARTICIPANTS,
     participantsCount: 0
   };
 
@@ -148,7 +151,7 @@ app.get('/api/calls/:sessionId', (req, res) => {
           code: meeting.code,
           title: meeting.title,
           status: 'ACTIVE',
-          maxParticipants: 2
+          maxParticipants: MAX_ROOM_PARTICIPANTS
         }
       });
     }
@@ -182,12 +185,12 @@ app.get('/api/calls/:sessionId', (req, res) => {
   }
 
   const room = rooms.get(sessionId);
-  if (room && room.participants.size >= session.maxParticipants) {
+  if (room && room.participants.size >= (session.maxParticipants || MAX_ROOM_PARTICIPANTS)) {
     return res.json({
       success: true,
       valid: false,
       status: 'FULL',
-      message: 'This call is currently full (maximum 2 participants).'
+      message: `This call is currently full (maximum ${session.maxParticipants || MAX_ROOM_PARTICIPANTS} participants).`
     });
   }
 
@@ -297,9 +300,10 @@ io.on('connection', (socket) => {
     currentUser = user;
     const room = getRoom(roomCode);
 
-    // Max 2 participant check for shareable call sessions
-    if (room.participants.size >= (room.maxParticipants || 2) && !room.participants.has(socket.id)) {
-      socket.emit('error-message', { message: 'This call is currently full (maximum 2 participants).' });
+    // Max participant check for shareable call sessions
+    const maxAllowed = room.maxParticipants || MAX_ROOM_PARTICIPANTS;
+    if (room.participants.size >= maxAllowed && !room.participants.has(socket.id)) {
+      socket.emit('error-message', { message: `This call is currently full (maximum ${maxAllowed} participants).` });
       socket.emit('room-status', { status: 'FULL' });
       return;
     }
@@ -408,19 +412,33 @@ io.on('connection', (socket) => {
   socket.on('speech-chunk', async (data) => {
     if (!currentRoomCode) return;
     const { text, sourceLang, targetLang, speakerName, speakerId } = data;
-
-    const translationResult = await processSpeechTranslation({
-      speakerId: speakerId || socket.id,
-      speakerName: speakerName || 'Participant',
-      text,
-      sourceLang: sourceLang || 'en',
-      targetLang: targetLang || 'en'
-    });
-
     const room = getRoom(currentRoomCode);
-    room.liveCaptions.push(translationResult);
 
-    io.to(currentRoomCode).emit('live-caption-chunk', translationResult);
+    // Collect all unique target languages among room participants
+    const targetLangs = new Set();
+    if (targetLang) targetLangs.add(targetLang);
+    for (const participant of room.participants.values()) {
+      const pLang = participant.spokenLanguage || participant.targetLanguage;
+      if (pLang) targetLangs.add(pLang);
+    }
+    if (targetLangs.size === 0) targetLangs.add('en');
+
+    for (const tLang of targetLangs) {
+      try {
+        const translationResult = await processSpeechTranslation({
+          speakerId: speakerId || socket.id,
+          speakerName: speakerName || 'Participant',
+          text,
+          sourceLang: sourceLang || 'en',
+          targetLang: tLang
+        });
+
+        room.liveCaptions.push(translationResult);
+        io.to(currentRoomCode).emit('live-caption-chunk', translationResult);
+      } catch (err) {
+        console.warn('[speech-chunk fanout error]', err);
+      }
+    }
   });
 
   // REAL CHAT AUTO-TRANSLATION PIPELINE
