@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
-import { createDailyRoom } from './dailyService.js';
+import { createDailyRoom, startDailyRecording, stopDailyRecording } from './dailyService.js';
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -55,6 +55,27 @@ function getRoom(meetingCode) {
   }
   return rooms.get(meetingCode);
 }
+
+// Daily.co Managed Room Endpoint
+app.post('/api/daily/room', async (req, res) => {
+  const { roomCode } = req.body;
+  const roomData = await createDailyRoom(roomCode);
+  res.json(roomData);
+});
+
+// Daily.co Cloud Recording Endpoints
+app.post('/api/recording/start', async (req, res) => {
+  const { roomName } = req.body;
+  const result = await startDailyRecording(roomName);
+  res.json(result);
+});
+
+app.post('/api/recording/stop', async (req, res) => {
+  const { recordingId } = req.body;
+  const result = await stopDailyRecording(recordingId);
+  res.json(result);
+});
+
 
 // Root Endpoint
 app.get('/', (req, res) => {
@@ -287,6 +308,12 @@ io.on('connection', (socket) => {
     socket.emit('room-polls-history', room.polls);
     socket.to(roomCode).emit('user-joined', { socketId: socket.id, user });
   });
+
+  socket.on('recording-status-changed', ({ isRecording, recorderName }) => {
+    if (!currentRoomCode) return;
+    io.to(currentRoomCode).emit('recording-status-update', { isRecording, recorderName });
+  });
+
 
   socket.on('admit-participant', ({ targetSocketId }) => {
     if (!currentRoomCode) return;

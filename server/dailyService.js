@@ -55,3 +55,60 @@ export async function createDailyRoom(roomCode) {
     };
   }
 }
+
+export async function startDailyRecording(roomName) {
+  const apiKey = process.env.DAILY_API_KEY;
+  if (!apiKey) {
+    return { success: false, isPaidRequired: true, message: 'DAILY_API_KEY environment variable is missing.' };
+  }
+
+  try {
+    const response = await fetch('https://api.daily.co/v1/recordings/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({ room_name: roomName })
+    });
+
+    const data = await response.json();
+    if (response.ok) {
+      return { success: true, recordingId: data.recording_id, data };
+    } else {
+      console.warn('[Daily.co Recording API Warning]', data);
+      return { 
+        success: false, 
+        isPaidRequired: response.status === 402 || (data.info && data.info.includes('paid')),
+        message: data.error || data.info || 'Cloud recording requires a paid Daily.co plan.' 
+      };
+    }
+  } catch (err) {
+    console.error('[Daily.co Start Recording Error]', err);
+    return { success: false, message: err.message };
+  }
+}
+
+export async function stopDailyRecording(recordingId) {
+  const apiKey = process.env.DAILY_API_KEY;
+  if (!apiKey || !recordingId) {
+    return { success: false, message: 'Missing API key or recordingId' };
+  }
+
+  try {
+    const response = await fetch(`https://api.daily.co/v1/recordings/${recordingId}/stop`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    const data = await response.json();
+    return { success: response.ok, data };
+  } catch (err) {
+    console.error('[Daily.co Stop Recording Error]', err);
+    return { success: false, message: err.message };
+  }
+}
+
