@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
-import { createDailyRoom, startDailyRecording, stopDailyRecording } from './dailyService.js';
+import { createDailyRoom, getDailyRoom, startDailyRecording, stopDailyRecording } from './dailyService.js';
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -87,6 +87,26 @@ app.get('/', (req, res) => {
 // Daily.co Managed Room Endpoint
 app.post('/api/daily/room', async (req, res) => {
   const { roomCode } = req.body;
+
+  // 1. Check if we already have it in callSessions
+  const session = callSessions.get(roomCode);
+  if (session && session.dailyRoomUrl) {
+    return res.json({ success: true, url: session.dailyRoomUrl, name: session.code });
+  }
+
+  // 2. Check mockMeetings
+  const meeting = mockMeetings.find(m => m.code === roomCode);
+  if (meeting && meeting.dailyRoomUrl) {
+    return res.json({ success: true, url: meeting.dailyRoomUrl, name: meeting.code });
+  }
+
+  // 3. Check Daily.co if room exists
+  const existingRoom = await getDailyRoom(roomCode);
+  if (existingRoom.success) {
+    return res.json(existingRoom);
+  }
+
+  // 4. Create new room
   const roomData = await createDailyRoom(roomCode);
   res.json(roomData);
 });
@@ -110,7 +130,7 @@ app.post('/api/calls', async (req, res) => {
     dailyRoomUrl: dailyRoom.url,
     title: title || 'Instant Translated Video Call',
     status: 'WAITING', // WAITING, ACTIVE, ENDED
-    hostId: hostId || 'unknown-host',
+    hostId: hostId || null,
     createdAt: new Date().toISOString(),
     expiresAt,
     maxParticipants: MAX_ROOM_PARTICIPANTS,
@@ -212,7 +232,7 @@ app.post('/api/meetings', async (req, res) => {
     title: title || 'Instant Video Call',
     description: description || 'Live translated session',
     status: 'LIVE',
-    hostId: hostId,
+    hostId: hostId || null,
     scheduledStart: scheduledStart || new Date().toISOString(),
     participantsCount: 1,
     settings: settings || {
@@ -249,15 +269,19 @@ app.get('/api/meetings/:code', async (req, res) => {
       });
     }
 
-    // Create real Daily room once for this code and persist in mockMeetings
-    const dailyRoom = await createDailyRoom(code);
+    // Attempt to get existing room, fallback to create
+    let dailyRoom = await getDailyRoom(code);
+    if (!dailyRoom.success) {
+      dailyRoom = await createDailyRoom(code);
+    }
+
     meeting = {
       id: `meeting-dynamic-${code}`,
       code: code,
       dailyRoomUrl: dailyRoom.url,
       title: `Call (${code})`,
       status: 'LIVE',
-      hostId: req.query.hostId || 'unknown-host',
+      hostId: req.query.hostId || null,
       settings: { waitingRoomEnabled: false, isLocked: false, allowScreenShare: true, allowChat: true }
     };
     mockMeetings.unshift(meeting);
