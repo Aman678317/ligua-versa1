@@ -690,6 +690,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                   name: p.user_name || (p.local ? currentUser.name : 'Participant'),
                   isLocal: p.local,
                   videoTrack: p.tracks?.video?.persistentTrack || p.tracks?.video?.track || (p.local && localCameraStream ? localCameraStream.getVideoTracks()[0] : null),
+                  audioTrack: p.tracks?.audio?.persistentTrack || p.tracks?.audio?.track,
                   audio: p.audio,
                   video: p.video,
                   raw: p
@@ -704,6 +705,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                     name: sp.name || sp.user?.name || (isLocal ? currentUser.name : 'Participant'),
                     isLocal,
                     videoTrack: isLocal && localCameraStream ? localCameraStream.getVideoTracks()[0] : null,
+                    audioTrack: null,
                     audio: true,
                     video: isLocal ? isVideoOn : true,
                     spokenLanguage: sp.spokenLanguage || sp.user?.spokenLanguage || 'en',
@@ -717,6 +719,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                 name: currentUser.name || 'Participant',
                 isLocal: true,
                 videoTrack: localCameraStream ? localCameraStream.getVideoTracks()[0] : null,
+                audioTrack: null,
                 audio: !isMuted,
                 video: isVideoOn,
                 spokenLanguage: selectedLanguage
@@ -761,7 +764,16 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
                           muted={isLocal}
                           ref={(el) => {
                             if (el) {
-                              const targetStream = isLocal && localCameraStream ? localCameraStream : (videoTrack ? new MediaStream([videoTrack]) : null);
+                              let targetStream = null;
+                              if (isLocal) {
+                                targetStream = localCameraStream;
+                              } else {
+                                const tracks = [];
+                                if (p.videoTrack) tracks.push(p.videoTrack);
+                                if (p.audioTrack) tracks.push(p.audioTrack);
+                                if (tracks.length > 0) targetStream = new MediaStream(tracks);
+                              }
+
                               if (targetStream && (!el.srcObject || el.srcObject !== targetStream)) {
                                 el.srcObject = targetStream;
                                 el.play().catch(() => {});
