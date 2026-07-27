@@ -45,8 +45,8 @@ const io = new Server(httpServer, {
   }
 });
 
-// Configurable Group Call Room Capacity
-const MAX_ROOM_PARTICIPANTS = 4;
+// Configurable Group Call Room Capacity (expanded to 16+ participants)
+const MAX_ROOM_PARTICIPANTS = process.env.MAX_ROOM_PARTICIPANTS ? parseInt(process.env.MAX_ROOM_PARTICIPANTS) : 16;
 
 // In-Memory Realtime Room State
 const rooms = new Map();
