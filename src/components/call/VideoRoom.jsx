@@ -78,6 +78,8 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
   const [showQrModal, setShowQrModal] = useState(false);
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
+  const [isHost, setIsHost] = useState(false);
+
   // 1. FETCH EXISTING DAILY ROOM URL & JOIN (GET ONLY - NEVER RE-CREATE ON JOIN)
   useEffect(() => {
     let callObj = null;
@@ -85,6 +87,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
     const initDailyCall = async () => {
       try {
         let roomUrl = '';
+        let foundHostId = '';
 
         // Check /api/calls/:sessionId first
         const callRes = await fetch(`/api/calls/${roomCode}`).catch(() => null);
@@ -92,6 +95,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
           const callData = await callRes.json();
           if (callData.session && callData.session.dailyRoomUrl) {
             roomUrl = callData.session.dailyRoomUrl;
+            foundHostId = callData.session.hostId;
           }
         }
 
@@ -102,9 +106,13 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
             const meetingData = await meetingRes.json();
             if (meetingData.meeting && meetingData.meeting.dailyRoomUrl) {
               roomUrl = meetingData.meeting.dailyRoomUrl;
+              foundHostId = meetingData.meeting.hostId;
             }
           }
         }
+
+        const calculatedIsHost = Boolean(foundHostId && currentUser?.id && foundHostId === currentUser.id);
+        setIsHost(calculatedIsHost);
 
         if (!roomUrl) {
           const safeCode = roomCode ? `lingua-${roomCode.replace(/[^a-zA-Z0-9_-]/g, '')}` : `lingua-${Date.now()}`;
@@ -159,7 +167,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         audioMixerRef.current.stop();
       }
     };
-  }, [roomCode]);
+  }, [roomCode, currentUser?.id]);
 
   // 2. SOCKET ROOM JOIN & REALTIME SPEECH TRANSLATION PIPELINE
   useEffect(() => {
@@ -178,7 +186,7 @@ export default function VideoRoom({ roomCode, currentUser, selectedLanguage, set
         id: currentUser.id,
         name: currentUser.name,
         avatar: currentUser.avatar,
-        isHost: true,
+        isHost: isHost,
         spokenLanguage: selectedLanguage
       }
     });

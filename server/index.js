@@ -116,7 +116,7 @@ app.post('/api/calls', async (req, res) => {
     dailyRoomUrl: dailyRoom.url,
     title: title || 'Instant Translated Video Call',
     status: 'WAITING', // WAITING, ACTIVE, ENDED
-    hostId: hostId || 'user-aman',
+    hostId: hostId || 'unknown-host',
     createdAt: new Date().toISOString(),
     expiresAt,
     maxParticipants: MAX_ROOM_PARTICIPANTS,

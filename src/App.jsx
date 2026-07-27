@@ -30,12 +30,19 @@ export default function App() {
     autoTranslateChat: true
   });
 
-  const [currentUser, setCurrentUser] = useState({
-    id: 'user-aman',
-    name: 'Aman Sharma',
-    email: 'aman@linguaversa.io',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    defaultLang: 'en'
+  const [currentUser, setCurrentUser] = useState(() => {
+    let storedId = localStorage.getItem('linguaversa_user_id');
+    if (!storedId) {
+      storedId = `user-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().substring(0, 8) : Math.random().toString(36).substring(2, 10)}`;
+      localStorage.setItem('linguaversa_user_id', storedId);
+    }
+    return {
+      id: storedId,
+      name: 'Aman Sharma',
+      email: `${storedId}@linguaversa.io`,
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      defaultLang: 'en'
+    };
   });
 
   // Data States
