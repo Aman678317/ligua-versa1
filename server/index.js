@@ -59,12 +59,6 @@ function getRoom(meetingCode) {
   return rooms.get(meetingCode);
 }
 
-// Daily.co Managed Room Endpoint
-app.post('/api/daily/room', async (req, res) => {
-  const { roomCode } = req.body;
-  const roomData = await createDailyRoom(roomCode);
-  res.json(roomData);
-});
 
 // Daily.co Cloud Recording Endpoints
 app.post('/api/recording/start', async (req, res) => {
@@ -207,7 +201,7 @@ app.get('/api/meetings', (req, res) => {
 });
 
 app.post('/api/meetings', async (req, res) => {
-  const { title, description, scheduledStart, settings } = req.body;
+  const { hostId, title, description, scheduledStart, settings } = req.body;
   const meetingCode = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
   const dailyRoom = await createDailyRoom(meetingCode);
 
@@ -218,7 +212,7 @@ app.post('/api/meetings', async (req, res) => {
     title: title || 'Instant Video Call',
     description: description || 'Live translated session',
     status: 'LIVE',
-    hostId: 'user-aman',
+    hostId: hostId,
     scheduledStart: scheduledStart || new Date().toISOString(),
     participantsCount: 1,
     settings: settings || {
@@ -249,7 +243,8 @@ app.get('/api/meetings/:code', async (req, res) => {
           code: session.code,
           dailyRoomUrl: session.dailyRoomUrl,
           title: session.title,
-          status: session.status
+          status: session.status,
+          hostId: session.hostId
         }
       });
     }
@@ -262,7 +257,7 @@ app.get('/api/meetings/:code', async (req, res) => {
       dailyRoomUrl: dailyRoom.url,
       title: `Call (${code})`,
       status: 'LIVE',
-      hostId: 'user-aman',
+      hostId: req.query.hostId || 'unknown-host',
       settings: { waitingRoomEnabled: false, isLocked: false, allowScreenShare: true, allowChat: true }
     };
     mockMeetings.unshift(meeting);

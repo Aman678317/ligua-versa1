@@ -33,7 +33,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     let storedId = localStorage.getItem('linguaversa_user_id');
     if (!storedId) {
-      storedId = `user-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().substring(0, 8) : Math.random().toString(36).substring(2, 10)}`;
+      storedId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 10);
       localStorage.setItem('linguaversa_user_id', storedId);
     }
     return {
