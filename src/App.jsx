@@ -180,6 +180,9 @@ export default function App() {
       setCurrentUser(prev => ({ ...prev, name: participantDetails.name }));
       localStorage.setItem('linguaversa_user_name', participantDetails.name);
     }
+    if (participantDetails?.blurBackground !== undefined) {
+      setUserSettings(prev => ({ ...prev, initialBlur: participantDetails.blurBackground }));
+    }
     setActiveRoomCode(roomCode);
     setActiveTab('call');
   };

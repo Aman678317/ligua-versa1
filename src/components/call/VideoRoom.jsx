@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, PhoneOff,
   MessageSquare, Shield, BarChart2, Sparkles, Users, LayoutGrid, User,
-  Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera
+  Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera, Image as ImageIcon
 } from 'lucide-react';
 import DualCaptionsOverlay from './DualCaptionsOverlay';
 import HostControlsModal from './HostControlsModal';
 import InCallChat from './InCallChat';
+import RoomActivities from './RoomActivities';
 import { EmojiReactionsOverlay, PollsModal } from './PollsAndReactions';
 import SpeechCanvas3D from '../visuals/SpeechCanvas3D';
 import VoiceParticles from '../canvas/VoiceParticles';
@@ -72,7 +73,10 @@ export default function VideoRoom({
   const [isMuted, setIsMuted]             = useState(false);
   const [isVideoOn, setIsVideoOn]         = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isBlurActive, setIsBlurActive]   = useState(userSettings?.initialBlur || false);
   const localStreamRef                    = useRef(null);
+  const processedStreamRef                = useRef(null);
+  const animFrameId                       = useRef(null);
 
   // ── Remote peers ───────────────────────────────────────────────────────────
   const [remotePeers, setRemotePeers]     = useState({});
@@ -85,6 +89,7 @@ export default function VideoRoom({
   // ── UI ─────────────────────────────────────────────────────────────────────
   const [copiedLink, setCopiedLink]       = useState(false);
   const [isChatOpen, setIsChatOpen]       = useState(false);
+  const [isActivitiesOpen, setIsActivitiesOpen] = useState(false);
   const [isHostControlsOpen, setIsHostControlsOpen] = useState(false);
   const [isPollsOpen, setIsPollsOpen]     = useState(false);
   const [showQrModal, setShowQrModal]     = useState(false);
@@ -191,6 +196,63 @@ export default function VideoRoom({
     }, 100);
     return () => clearInterval(id);
   }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Virtual Background (Blur) Effect
+  // ═══════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!localStreamRef.current) return;
+    
+    if (!isBlurActive) {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
+      if (processedStreamRef.current) {
+        processedStreamRef.current.getTracks().forEach(t => t.stop());
+        processedStreamRef.current = null;
+      }
+      setLocalStream(localStreamRef.current);
+      if (webrtcManagerRef.current && hasJoinedRef.current) {
+        webrtcManagerRef.current.updateLocalStream(localStreamRef.current);
+      }
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    
+    const video = document.createElement('video');
+    video.muted = true;
+    video.srcObject = localStreamRef.current;
+    video.play().catch(() => {});
+
+    const draw = () => {
+      if (ctx && video.readyState >= 2) {
+         ctx.filter = 'blur(10px)';
+         ctx.drawImage(video, 0, 0, 640, 480);
+      }
+      animFrameId.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const processedStream = canvas.captureStream(30);
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (audioTrack) {
+      processedStream.addTrack(audioTrack);
+    }
+    
+    processedStreamRef.current = processedStream;
+    setLocalStream(processedStream);
+    
+    if (webrtcManagerRef.current && hasJoinedRef.current) {
+      webrtcManagerRef.current.updateLocalStream(processedStream);
+    }
+    
+    return () => {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
+      video.srcObject = null;
+    };
+  }, [isBlurActive, localStreamRef.current]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // WebRTC callbacks
@@ -639,6 +701,9 @@ export default function VideoRoom({
             <CtrlBtn id="video-btn" onClick={toggleVideo} active={!isVideoOn} color="rose" title="Toggle camera">
               {isVideoOn ? <VideoIcon className="w-5 h-5 text-[#00E5C7]"/> : <VideoOff className="w-5 h-5"/>}
             </CtrlBtn>
+            <CtrlBtn id="blur-btn" onClick={() => setIsBlurActive(!isBlurActive)} active={isBlurActive} color="indigo" title="Toggle background blur">
+              <ImageIcon className={`w-5 h-5 ${isBlurActive ? 'text-white' : 'text-[#00E5C7]'}`}/>
+            </CtrlBtn>
             <CtrlBtn id="screen-btn" onClick={toggleScreenShare} active={isScreenSharing} color="indigo" title="Share screen">
               <Monitor className="w-5 h-5"/>
             </CtrlBtn>
@@ -657,6 +722,9 @@ export default function VideoRoom({
             </div>
             <button id="polls-btn" onClick={() => setIsPollsOpen(true)} className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10" title="Polls">
               <BarChart2 className="w-5 h-5 text-indigo-400"/>
+            </button>
+            <button id="activities-btn" onClick={() => setIsActivitiesOpen(!isActivitiesOpen)} className={`p-3 rounded-2xl transition-all ${isActivitiesOpen ? 'bg-amber-500 text-slate-900 font-bold' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10'}`} title="Activities">
+              <LayoutGrid className="w-5 h-5"/>
             </button>
           </div>
           {/* Right */}
@@ -678,6 +746,7 @@ export default function VideoRoom({
 
       {/* Panels */}
       <InCallChat isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} messages={chatMessages} onSendMessage={sendChat} selectedLanguage={selectedLanguage} languages={languages}/>
+      <RoomActivities isOpen={isActivitiesOpen} onClose={() => setIsActivitiesOpen(false)} socket={socket} roomCode={roomCode} currentUser={currentUser} />
       <HostControlsModal isOpen={isHostControlsOpen} onClose={() => setIsHostControlsOpen(false)}
         participants={socketParticipants.filter(p => p.socketId !== socket.id).map(p => ({ socketId: p.socketId, name: p.name || 'Participant' }))}
         waitingRoomList={waitingRoomList} roomSettings={roomSettings}
@@ -791,12 +860,39 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
         </div>
       )}
 
-      {/* Name tag */}
+      {/* Name tag and Controls */}
       {!compact && (
-        <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
-          <span>{p.name || 'Participant'}{p.isLocal ? ' (You)' : ''}</span>
-          <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase">{p.isLocal ? selectedLanguage : (p.spokenLanguage || 'en')}</span>
-          {p.isLocal && isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400"/>}
+        <div className="absolute bottom-3 left-3 flex items-center gap-2">
+          <div className="bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10 text-xs font-bold text-white flex items-center gap-2">
+            <span>{p.name || 'Participant'}{p.isLocal ? ' (You)' : ''}</span>
+            <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase">{p.isLocal ? selectedLanguage : (p.spokenLanguage || 'en')}</span>
+            {p.isLocal && isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400"/>}
+          </div>
+          
+          {/* PiP Button */}
+          {videoActive && p.stream && (
+            <button 
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  if (document.pictureInPictureElement) {
+                    await document.exitPictureInPicture();
+                  } else if (videoRef.current) {
+                    await videoRef.current.requestPictureInPicture();
+                  }
+                } catch (err) {
+                  console.error('Failed to enter PiP mode', err);
+                }
+              }}
+              title="Picture-in-Picture"
+              className="p-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <rect x="12" y="14" width="7" height="5" rx="1" ry="1"/>
+              </svg>
+            </button>
+          )}
         </div>
       )}
     </div>

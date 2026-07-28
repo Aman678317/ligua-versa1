@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, MicOff, Video as VideoIcon, VideoOff, Settings, Volume2, 
-  Sparkles, ShieldCheck, ArrowRight, CameraOff, AlertCircle, User
+  Sparkles, ShieldCheck, ArrowRight, CameraOff, AlertCircle, User, Image as ImageIcon
 } from 'lucide-react';
 import PermissionBanner from '../call/PermissionBanner';
 import { AudioMixer } from '../../utils/AudioMixer';
 
 export default function PreJoinPreview({ roomCode, currentUser, sessionStatus = 'VALID', selectedLanguage, setSelectedLanguage, languages, onJoinCall, onCancel }) {
-  // Media State
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isBlurActive, setIsBlurActive] = useState(false);
   const [localStream, setLocalStream] = useState(null);
   const [permissionErrorType, setPermissionErrorType] = useState(null);
 
@@ -78,13 +78,48 @@ export default function PreJoinPreview({ roomCode, currentUser, sessionStatus = 
     };
   }, [selectedVideoDevice, selectedAudioDevice]);
 
-  // Attach stream to video node
+  // Attach stream to video node with optional blur
+  const animFrameId = useRef(null);
+
   useEffect(() => {
-    if (videoRef.current && localStream && isVideoOn) {
+    if (!videoRef.current || !localStream || !isVideoOn) return;
+
+    if (!isBlurActive) {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
       videoRef.current.srcObject = localStream;
       videoRef.current.play().catch(() => {});
+      return;
     }
-  }, [localStream, isVideoOn]);
+
+    // Apply Blur Effect for Preview
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    
+    const hiddenVideo = document.createElement('video');
+    hiddenVideo.muted = true;
+    hiddenVideo.srcObject = localStream;
+    hiddenVideo.play().catch(() => {});
+
+    const draw = () => {
+      if (ctx && hiddenVideo.readyState >= 2) {
+         ctx.filter = 'blur(10px)';
+         ctx.drawImage(hiddenVideo, 0, 0, 640, 480);
+      }
+      animFrameId.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const processedStream = canvas.captureStream(30);
+    videoRef.current.srcObject = processedStream;
+    videoRef.current.play().catch(() => {});
+
+    return () => {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
+      hiddenVideo.srcObject = null;
+    };
+  }, [localStream, isVideoOn, isBlurActive]);
 
   // Audio level meter loop
   useEffect(() => {
@@ -115,7 +150,7 @@ export default function PreJoinPreview({ roomCode, currentUser, sessionStatus = 
 
   const handleJoinClick = () => {
     const finalName = guestName.trim() || 'Guest Participant';
-    onJoinCall(roomCode, { name: finalName, spokenLanguage: selectedLanguage });
+    onJoinCall(roomCode, { name: finalName, spokenLanguage: selectedLanguage, blurBackground: isBlurActive });
   };
 
   if (sessionStatus === 'LOADING') {
@@ -208,6 +243,16 @@ export default function PreJoinPreview({ roomCode, currentUser, sessionStatus = 
                 title={isVideoOn ? 'Turn Camera Off' : 'Turn Camera On'}
               >
                 {isVideoOn ? <VideoIcon className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </button>
+              
+              <button
+                onClick={() => setIsBlurActive(!isBlurActive)}
+                className={`p-3 rounded-xl transition-all ${
+                  isBlurActive ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-cyan-400'
+                }`}
+                title="Toggle Background Blur"
+              >
+                <ImageIcon className="w-5 h-5" />
               </button>
             </div>
 

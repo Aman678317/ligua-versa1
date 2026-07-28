@@ -522,6 +522,16 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('draw-line', (data) => {
+    if (!currentRoomCode) return;
+    socket.to(currentRoomCode).emit('draw-line', data);
+  });
+
+  socket.on('youtube-sync', (data) => {
+    if (!currentRoomCode) return;
+    socket.to(currentRoomCode).emit('youtube-sync', data);
+  });
+
   // Reconnect Session Handler
   socket.on('rejoin-session', ({ roomCode, user, previousSocketId }) => {
     currentRoomCode = roomCode;
