@@ -10,9 +10,7 @@ import HostControlsModal from './HostControlsModal';
 import InCallChat from './InCallChat';
 import RoomActivities from './RoomActivities';
 import { EmojiReactionsOverlay, PollsModal } from './PollsAndReactions';
-import SpeechCanvas3D from '../visuals/SpeechCanvas3D';
-import VoiceParticles from '../canvas/VoiceParticles';
-import { ChatBotOrb } from '../canvas/ChatBotOrb';
+
 import AIStatusIndicator from './AIStatusIndicator';
 import { AudioMixer } from '../../utils/AudioMixer';
 import { CaptionSynchronizer } from '../../utils/CaptionSynchronizer';
@@ -557,8 +555,7 @@ export default function VideoRoom({
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div className="relative w-full h-[calc(100vh-4rem)] bg-[#05060B] flex overflow-hidden">
-      <VoiceParticles isSpeaking={!isMuted} amplitude={volumeLevel} />
-      <SpeechCanvas3D isSpeaking={!isMuted} frequencyData={frequencyData} />
+
       <EmojiReactionsOverlay floatingReactions={floatingReactions} />
 
       {/* Banners */}
@@ -585,7 +582,7 @@ export default function VideoRoom({
         {/* Status bar */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-lg">
           <div className="flex items-center gap-2">
-            <ChatBotOrb isProcessing={!isMuted}/>
+
             <span className="text-xs font-bold text-white max-w-[90px] truncate">{roomCode}</span>
           </div>
           <span className="text-slate-600">|</span>

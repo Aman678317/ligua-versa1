@@ -9,8 +9,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:db": "prisma db push"
   },
   "dependencies": {
     "cors": "^2.8.5",

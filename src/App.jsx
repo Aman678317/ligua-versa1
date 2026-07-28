@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import Navbar from './components/navbar/Navbar';
-import LandingPage from './components/landing/LandingPage';
 import DashboardLayout from './components/dashboard/DashboardLayout';
 import PreJoinPreview from './components/prejoin/PreJoinPreview';
 import VideoRoom from './components/call/VideoRoom';
@@ -13,7 +12,7 @@ import MeetingCreatedModal from './components/modals/MeetingCreatedModal';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './mockData';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('landing'); // 'landing' | 'dashboard' | 'prejoin' | 'call' | 'summary' | 'analytics' | 'settings'
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'prejoin' | 'call' | 'summary' | 'analytics' | 'settings'
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [activeRoomCode, setActiveRoomCode] = useState('global-sync-892');
   
@@ -202,23 +201,19 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       
-      {activeTab === 'landing' ? (
-        <LandingPage onGetStarted={() => setActiveTab('dashboard')} />
-      ) : (
-        <>
-          {/* Top Navbar */}
-          <Navbar
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            currentUser={currentUser}
-            selectedLanguage={selectedLanguage}
-            setSelectedLanguage={setSelectedLanguage}
-            languages={languages}
-            onOpenAuth={() => setIsAuthOpen(true)}
-          />
+      {/* Top Navbar */}
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        currentUser={currentUser}
+        selectedLanguage={selectedLanguage}
+        setSelectedLanguage={setSelectedLanguage}
+        languages={languages}
+        onOpenAuth={() => setIsAuthOpen(true)}
+      />
 
-          {/* Dynamic Main View */}
-          <main className="flex-1">
+      {/* Dynamic Main View */}
+      <main className="flex-1">
         {activeTab === 'dashboard' && (
           <DashboardLayout
             currentUser={currentUser}
@@ -271,8 +266,6 @@ export default function App() {
           />
         )}
       </main>
-      </>
-      )}
 
       {/* App Flow Modals */}
       <AuthModal

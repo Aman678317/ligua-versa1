@@ -3,7 +3,7 @@ import {
   Video, Keyboard, ArrowRight, ShieldCheck, Sparkles, Globe2, 
   Users, Clock, Play, FileText, ChevronRight, CheckCircle2, AlertCircle
 } from 'lucide-react';
-import HoloEarth from '../canvas/HoloEarth';
+
 import NewMeetingDropdown from '../landing/NewMeetingDropdown';
 
 export default function DashboardLayout({ 
@@ -67,10 +67,7 @@ export default function DashboardLayout({
       {/* Google Meet-Style Clean Landing Hero */}
       <section className="relative w-full py-12 lg:py-20 px-4 sm:px-8 max-w-7xl mx-auto flex-1 flex flex-col justify-center">
         
-        {/* Ambient Holographic Background */}
-        <div className="absolute inset-0 opacity-30 pointer-events-none overflow-hidden">
-          <HoloEarth />
-        </div>
+
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
           
