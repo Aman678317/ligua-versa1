@@ -10,6 +10,7 @@ import HostControlsModal from './HostControlsModal';
 import InCallChat from './InCallChat';
 import RoomActivities from './RoomActivities';
 import { EmojiReactionsOverlay, PollsModal } from './PollsAndReactions';
+import VoiceConsentModal from '../modals/VoiceConsentModal';
 
 import AIStatusIndicator from './AIStatusIndicator';
 import { AudioMixer } from '../../utils/AudioMixer';
@@ -132,6 +133,9 @@ export default function VideoRoom({
   });
 
   const [isHost, setIsHost] = useState(false);
+  const [showConsentModal, setShowConsentModal] = useState(true);
+  const [voiceCloningEnabled, setVoiceCloningEnabled] = useState(false);
+  
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -693,6 +697,20 @@ export default function VideoRoom({
             </div>
           )}
         </div>
+
+        {/* --- Modals and Overlays --- */}
+        <VoiceConsentModal
+          isOpen={showConsentModal}
+          onAccept={() => {
+            setVoiceCloningEnabled(true);
+            setShowConsentModal(false);
+            // Optionally, we could capture the first 5 seconds of audio here for the voice clone reference
+          }}
+          onDecline={() => {
+            setVoiceCloningEnabled(false);
+            setShowConsentModal(false);
+          }}
+        />
 
         {/* Captions */}
         {showCaptions && localStream && (

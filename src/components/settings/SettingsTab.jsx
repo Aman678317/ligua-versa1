@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sliders, Volume2, Sparkles, Eye, Shield, Check, Save, Accessibility } from 'lucide-react';
+import GlossarySettings from './GlossarySettings';
 
 export default function SettingsTab({ onSaveSettings }) {
   const [captionSize, setCaptionSize] = useState('medium'); // small, medium, large
@@ -179,6 +180,11 @@ export default function SettingsTab({ onSaveSettings }) {
         </div>
 
       </form>
+      
+      {/* Glossary Settings Section */}
+      <div className="pt-8 border-t border-white/10 mt-8">
+        <GlossarySettings user={{ id: 'default-user' }} />
+      </div>
 
     </div>
   );

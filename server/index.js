@@ -1,9 +1,14 @@
 import express from 'express';
 import { createServer } from 'http';
+import crypto from 'crypto';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
+import { PrismaClient } from '@prisma/client';
+import { enqueueSummaryJob } from './summaryQueue.js';
+
+const prisma = new PrismaClient();
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -306,6 +311,19 @@ io.on('connection', (socket) => {
       session.participantsCount = room.participants.size;
     }
 
+    // Initialize DB Call Session if not exists
+    if (!room.call_session_id) {
+      prisma.callSession.create({
+        data: {
+          participant_a_id: user?.id || crypto.randomUUID(),
+          participant_b_id: crypto.randomUUID(), // Placeholder until participant B joins
+          tone_setting: 'casual'
+        }
+      }).then(session => {
+        room.call_session_id = session.id;
+      }).catch(err => console.error("Failed to create CallSession:", err));
+    }
+
     // Send existing peer IDs to the new joiner so they can initiate WebRTC offers
     const existingPeerIds = Array.from(room.participants.keys()).filter(id => id !== socket.id);
     socket.emit('existing-peers', { peerSocketIds: existingPeerIds });
@@ -420,6 +438,22 @@ io.on('connection', (socket) => {
 
         // Deliver translated caption & TTS specifically to this participant
         io.to(pSocketId).emit('live-caption-chunk', translationResult);
+
+        // Async save to DB
+        if (room.call_session_id) {
+          prisma.callUtterance.create({
+            data: {
+              call_session_id: room.call_session_id,
+              speaker_id: actualSpeakerId.substring(0, 36) || crypto.randomUUID(), // Ensure max 36 chars if not uuid
+              source_lang: actualSourceLang,
+              target_lang: listenerLang,
+              source_text: text || '',
+              translated_text: translationResult.translatedText || '',
+              qa_confidence: translationResult.qaConfidence || 1.0,
+              qa_flagged: translationResult.qaFlagged || false
+            }
+          }).catch(err => console.error("Failed to save utterance:", err));
+        }
       } catch (err) {
         console.warn('[speech-chunk error for participant]', pSocketId, err);
       }
@@ -624,11 +658,76 @@ io.on('connection', (socket) => {
   });
 });
 
-const rawPort = parseInt(process.env.PORT, 10);
-const PORT = !isNaN(rawPort) && rawPort > 0 ? rawPort : 3001;
+// Glossary API Endpoints
+app.get('/api/glossary', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  try {
+    const terms = await prisma.glossaryTerm.findMany({
+      where: { owner_id: userId, owner_type: 'user' }
+    });
+    res.json(terms);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[LinguaVersa Server] Running on port ${PORT}`);
+app.post('/api/glossary', async (req, res) => {
+  const { userId, source_term, target_lang, preferred_translation } = req.body;
+  try {
+    const term = await prisma.glossaryTerm.upsert({
+      where: {
+        owner_type_owner_id_source_term_target_lang: {
+          owner_type: 'user',
+          owner_id: userId,
+          source_term,
+          target_lang
+        }
+      },
+      update: { preferred_translation },
+      create: {
+        owner_type: 'user',
+        owner_id: userId,
+        source_term,
+        target_lang,
+        preferred_translation
+      }
+    });
+    res.json(term);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/glossary/:id', async (req, res) => {
+  try {
+    await prisma.glossaryTerm.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/meetings/end', async (req, res) => {
+  const { callSessionId, targetLangA, targetLangB } = req.body;
+  if (!callSessionId) return res.status(400).json({ error: "Missing session ID" });
+  
+  try {
+    const utterances = await prisma.callUtterance.findMany({
+      where: { call_session_id: callSessionId },
+      orderBy: { timestamp: 'asc' }
+    });
+    
+    await enqueueSummaryJob(callSessionId, utterances, targetLangA, targetLangB);
+    res.json({ success: true, message: "Summary generation enqueued." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+const PORT = process.env.PORT || 3001;
+httpServer.listen(PORT, () => {
+  console.log(`🚀 LinguaVersa Core Server running on port ${PORT}`);
   if (!process.env.DAILY_API_KEY) {
     console.error('================================================================');
     console.error('[CRITICAL BOOT ERROR] DAILY_API_KEY is NOT set in process.env!');

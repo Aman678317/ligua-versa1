@@ -35,9 +35,10 @@ class TTSEngineManager:
         }
         
         try:
-            # from TTS.api import TTS
-            # self.xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to("cpu")
-            self.xtts_model = None # Stub for heavy model
+            from TTS.api import TTS
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
             self.has_xtts = True
         except ImportError:
             self.has_xtts = False
@@ -64,8 +65,20 @@ class TTSEngineManager:
         # 1. Try XTTS
         if self.has_xtts and target_lang in self.xtts_supported_langs and speaker_wav_path:
             try:
-                # audio_bytes = self.xtts_model.tts(text=text_clean, speaker_wav=speaker_wav_path, language=target_lang)
-                raise Exception("XTTS inference stubbed / missing wav")
+                import tempfile
+                import os
+                out_path = tempfile.mktemp(suffix=".wav")
+                self.xtts_model.tts_to_file(
+                    text=text_clean, 
+                    speaker_wav=speaker_wav_path, 
+                    language=target_lang, 
+                    file_path=out_path
+                )
+                with open(out_path, "rb") as f:
+                    audio_bytes = f.read()
+                audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                engine_used = "xtts"
+                os.remove(out_path)
             except Exception as e:
                 logging.warning(f"XTTS synthesis error: {e}. Falling back to edge-tts.")
                 engine_used = "fallback"
