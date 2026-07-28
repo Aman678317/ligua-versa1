@@ -294,148 +294,175 @@ export default function VideoRoom({
       .then(d => { if (d.session?.hostId === currentUser?.id) setIsHost(true); })
       .catch(() => {});
 
-    try {
-      const speechService = new SpeechTranslationService(socket, selectedLanguage, selectedLanguage, currentUser.name);
-      speechServiceRef.current = speechService;
-      speechService.start(localStream);
-    } catch (e) {
-      console.warn('[VideoRoom] SpeechTranslation init warning:', e);
-    }
+    let rtcManager = null;
 
-    const handleIceStateChange = (peerId, state) => {
-      setRemotePeers(prev => ({
-        ...prev,
-        [peerId]: { ...(prev[peerId] || {}), iceState: state }
-      }));
-    };
-
-    const rtcManager = new WebRTCManager(socket, localStream, handleRemoteStreamAdded, handleRemoteStreamRemoved, handleIceStateChange);
-    webrtcManagerRef.current = rtcManager;
-
-    socket.emit('join-room', {
-      roomCode,
-      user: { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar, isHost: false, spokenLanguage: selectedLanguage }
-    });
-
-    const onExistingPeers = ({ peerSocketIds }) => {
-      console.log('[VideoRoom] existing-peers:', peerSocketIds);
-      if (peerSocketIds.length === 0) {
-        setConnectionStatus('alone');
-      } else {
-        setConnectionStatus('connecting');
-        peerSocketIds.forEach(id => rtcManager.initiateOffer(id));
+    const initWebRTC = (iceServers) => {
+      try {
+        const speechService = new SpeechTranslationService(socket, selectedLanguage, selectedLanguage, currentUser.name);
+        speechServiceRef.current = speechService;
+        speechService.start(localStream);
+      } catch (e) {
+        console.warn('[VideoRoom] SpeechTranslation init warning:', e);
       }
-    };
 
-    const onUserJoined = ({ socketId, user }) => {
-      console.log('[VideoRoom] user-joined:', socketId, user?.name);
-      setConnectionStatus('connecting');
-      setRemotePeers(prev => ({
-        ...prev,
-        [socketId]: { ...(prev[socketId] || {}), name: user?.name || 'Participant', spokenLanguage: user?.spokenLanguage || 'en' }
-      }));
-    };
+      const handleIceStateChange = (peerId, state) => {
+        setRemotePeers(prev => ({
+          ...prev,
+          [peerId]: { ...(prev[peerId] || {}), iceState: state }
+        }));
+      };
 
-    const onParticipants = (participants) => {
-      setSocketParticipants(participants);
-      participants.forEach(p => {
-        if (p.socketId !== socket.id) {
-          setRemotePeers(prev => ({
-            ...prev,
-            [p.socketId]: { ...(prev[p.socketId] || {}), name: p.name, spokenLanguage: p.spokenLanguage }
-          }));
-        }
+      rtcManager = new WebRTCManager(socket, localStream, iceServers, handleRemoteStreamAdded, handleRemoteStreamRemoved, handleIceStateChange);
+      webrtcManagerRef.current = rtcManager;
+
+      socket.emit('join-room', {
+        roomCode,
+        user: { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar, isHost: false, spokenLanguage: selectedLanguage }
       });
+
+      const onExistingPeers = ({ peerSocketIds, myRole }) => {
+        console.log('[VideoRoom] existing-peers:', peerSocketIds, 'myRole:', myRole);
+        if (myRole) rtcManager.setRole(myRole);
+
+        if (peerSocketIds.length === 0) {
+          setConnectionStatus('alone');
+        } else {
+          setConnectionStatus('connecting');
+          // Perfect negotiation will automatically handle offers when tracks are added.
+        }
+      };
+
+      const onUserJoined = ({ socketId, user, negotiationRole }) => {
+        console.log('[VideoRoom] user-joined:', socketId, user?.name);
+        setConnectionStatus('connecting');
+        setRemotePeers(prev => ({
+          ...prev,
+          [socketId]: { ...(prev[socketId] || {}), name: user?.name || 'Participant', spokenLanguage: user?.spokenLanguage || 'en' }
+        }));
+      };
+
+      const onParticipants = (participants) => {
+        setSocketParticipants(participants);
+        participants.forEach(p => {
+          if (p.socketId !== socket.id) {
+            setRemotePeers(prev => ({
+              ...prev,
+              [p.socketId]: { ...(prev[p.socketId] || {}), name: p.name, spokenLanguage: p.spokenLanguage }
+            }));
+          }
+        });
+      };
+
+      const onPeerLeft = ({ socketId }) => {
+        rtcManager.closePeerConnection(socketId);
+        setRemotePeers(prev => { const n = { ...prev }; delete n[socketId]; return n; });
+        setPeerBanner(null);
+      };
+
+      const onPeerDisconnected = ({ user })  => setPeerBanner(user?.name || 'Participant');
+      const onPeerReconnected  = ()          => setPeerBanner(null);
+
+      const onTranslating = ({ speakerId, isTranslating }) =>
+        setTranslatingSpeakers(prev => ({ ...prev, [speakerId]: isTranslating }));
+
+      const onCaption = (caption) => {
+        setCurrentCaption(captionSyncRef.current.pushChunk(caption));
+        if (caption.audioBase64 && caption.speakerId !== socket.id) {
+          setActiveDubbingSpeaker(caption.speakerId);
+          const snd = new Audio(`data:audio/${caption.audioFormat || 'mp3'};base64,${caption.audioBase64}`);
+          snd.volume = 0.95;
+          const restore = () => setActiveDubbingSpeaker(null);
+          snd.onended = restore; snd.onerror = restore;
+          snd.play().catch(restore);
+        }
+      };
+
+      const onNewChat   = (msg) => setChatMessages(prev => [...prev, msg]);
+      const onReaction  = ({ emoji }) => {
+        const obj = { id: `r-${Date.now()}`, emoji, x: Math.floor(Math.random() * 80) + 10, rotate: Math.floor(Math.random() * 40) - 20 };
+        setFloatingReactions(prev => [...prev, obj]);
+        setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== obj.id)), 4000);
+      };
+      const onPollCreated   = (p)  => setPolls(prev => [...prev, p]);
+      const onPollUpdated   = (p)  => setPolls(prev => prev.map(x => x.id === p.id ? p : x));
+      const onHostMuted     = ()   => { localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; }); setIsMuted(true); };
+      const onRemoved       = ()   => { alert('You have been removed by the host.'); onLeaveCall(); };
+      const onWaitingUpdate = (l)  => setWaitingRoomList(l);
+      const onRoomSettings  = (s)  => setRoomSettings(s);
+      const onRecording     = ({ isRecording: r, recorderName: n }) => { setIsRecording(r); setRecorderName(n || 'Host'); };
+      const onDisconnect    = ()   => { setIsReconnecting(true); setConnectionStatus('connecting'); };
+      const onConnect       = ()   => {
+        setIsReconnecting(false);
+        socket.emit('rejoin-session', { roomCode, user: { name: currentUser.name, spokenLanguage: selectedLanguage }, previousSocketId: socket.id });
+      };
+
+      socket.on('existing-peers',             onExistingPeers);
+      socket.on('user-joined',                onUserJoined);
+      socket.on('room-participants-update',   onParticipants);
+      socket.on('peer-left',                  onPeerLeft);
+      socket.on('peer-disconnected',          onPeerDisconnected);
+      socket.on('peer-reconnected',           onPeerReconnected);
+      socket.on('speaker-translating-status', onTranslating);
+      socket.on('live-caption-chunk',         onCaption);
+      socket.on('new-chat-message',           onNewChat);
+      socket.on('new-reaction',               onReaction);
+      socket.on('poll-created',               onPollCreated);
+      socket.on('poll-updated',               onPollUpdated);
+      socket.on('host-muted-you',             onHostMuted);
+      socket.on('removed-by-host',            onRemoved);
+      socket.on('waiting-room-update',        onWaitingUpdate);
+      socket.on('room-settings-updated',      onRoomSettings);
+      socket.on('recording-status-update',    onRecording);
+      socket.on('disconnect',                 onDisconnect);
+      socket.on('connect',                    onConnect);
+
+      return {
+        onExistingPeers, onUserJoined, onParticipants, onPeerLeft, onPeerDisconnected, onPeerReconnected,
+        onTranslating, onCaption, onNewChat, onReaction, onPollCreated, onPollUpdated, onHostMuted,
+        onRemoved, onWaitingUpdate, onRoomSettings, onRecording, onDisconnect, onConnect
+      };
     };
 
-    const onPeerLeft = ({ socketId }) => {
-      rtcManager.closePeerConnection(socketId);
-      setRemotePeers(prev => { const n = { ...prev }; delete n[socketId]; return n; });
-      setPeerBanner(null);
-    };
+    let cleanupHandlers = null;
 
-    const onPeerDisconnected = ({ user })  => setPeerBanner(user?.name || 'Participant');
-    const onPeerReconnected  = ()          => setPeerBanner(null);
-
-    const onTranslating = ({ speakerId, isTranslating }) =>
-      setTranslatingSpeakers(prev => ({ ...prev, [speakerId]: isTranslating }));
-
-    const onCaption = (caption) => {
-      setCurrentCaption(captionSyncRef.current.pushChunk(caption));
-      if (caption.audioBase64 && caption.speakerId !== socket.id) {
-        setActiveDubbingSpeaker(caption.speakerId);
-        const snd = new Audio(`data:audio/${caption.audioFormat || 'mp3'};base64,${caption.audioBase64}`);
-        snd.volume = 0.95;
-        const restore = () => setActiveDubbingSpeaker(null);
-        snd.onended = restore; snd.onerror = restore;
-        snd.play().catch(restore);
-      }
-    };
-
-    const onNewChat   = (msg) => setChatMessages(prev => [...prev, msg]);
-    const onReaction  = ({ emoji }) => {
-      const obj = { id: `r-${Date.now()}`, emoji, x: Math.floor(Math.random() * 80) + 10, rotate: Math.floor(Math.random() * 40) - 20 };
-      setFloatingReactions(prev => [...prev, obj]);
-      setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== obj.id)), 4000);
-    };
-    const onPollCreated   = (p)  => setPolls(prev => [...prev, p]);
-    const onPollUpdated   = (p)  => setPolls(prev => prev.map(x => x.id === p.id ? p : x));
-    const onHostMuted     = ()   => { localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; }); setIsMuted(true); };
-    const onRemoved       = ()   => { alert('You have been removed by the host.'); onLeaveCall(); };
-    const onWaitingUpdate = (l)  => setWaitingRoomList(l);
-    const onRoomSettings  = (s)  => setRoomSettings(s);
-    const onRecording     = ({ isRecording: r, recorderName: n }) => { setIsRecording(r); setRecorderName(n || 'Host'); };
-    const onDisconnect    = ()   => { setIsReconnecting(true); setConnectionStatus('connecting'); };
-    const onConnect       = ()   => {
-      setIsReconnecting(false);
-      socket.emit('rejoin-session', { roomCode, user: { name: currentUser.name, spokenLanguage: selectedLanguage }, previousSocketId: socket.id });
-    };
-
-    socket.on('existing-peers',             onExistingPeers);
-    socket.on('user-joined',                onUserJoined);
-    socket.on('room-participants-update',   onParticipants);
-    socket.on('peer-left',                  onPeerLeft);
-    socket.on('peer-disconnected',          onPeerDisconnected);
-    socket.on('peer-reconnected',           onPeerReconnected);
-    socket.on('speaker-translating-status', onTranslating);
-    socket.on('live-caption-chunk',         onCaption);
-    socket.on('new-chat-message',           onNewChat);
-    socket.on('new-reaction',               onReaction);
-    socket.on('poll-created',               onPollCreated);
-    socket.on('poll-updated',               onPollUpdated);
-    socket.on('host-muted-you',             onHostMuted);
-    socket.on('removed-by-host',            onRemoved);
-    socket.on('waiting-room-update',        onWaitingUpdate);
-    socket.on('room-settings-updated',      onRoomSettings);
-    socket.on('recording-status-update',    onRecording);
-    socket.on('disconnect',                 onDisconnect);
-    socket.on('connect',                    onConnect);
+    // Fetch TURN credentials securely from backend
+    fetch(import.meta.env.VITE_BACKEND_URL + '/api/turn-credentials')
+      .then(r => r.json())
+      .then(d => {
+        cleanupHandlers = initWebRTC(d.iceServers || undefined);
+      })
+      .catch(err => {
+        console.error('[VideoRoom] Failed to fetch TURN servers', err);
+        cleanupHandlers = initWebRTC(undefined);
+      });
 
     return () => {
       hasJoinedRef.current = false;
       speechServiceRef.current?.stop();
       socket.emit('leave-session');
-      rtcManager.destroy();
+      if (rtcManager) rtcManager.destroy();
 
-      socket.off('existing-peers',             onExistingPeers);
-      socket.off('user-joined',                onUserJoined);
-      socket.off('room-participants-update',   onParticipants);
-      socket.off('peer-left',                  onPeerLeft);
-      socket.off('peer-disconnected',          onPeerDisconnected);
-      socket.off('peer-reconnected',           onPeerReconnected);
-      socket.off('speaker-translating-status', onTranslating);
-      socket.off('live-caption-chunk',         onCaption);
-      socket.off('new-chat-message',           onNewChat);
-      socket.off('new-reaction',               onReaction);
-      socket.off('poll-created',               onPollCreated);
-      socket.off('poll-updated',               onPollUpdated);
-      socket.off('host-muted-you',             onHostMuted);
-      socket.off('removed-by-host',            onRemoved);
-      socket.off('waiting-room-update',        onWaitingUpdate);
-      socket.off('room-settings-updated',      onRoomSettings);
-      socket.off('recording-status-update',    onRecording);
-      socket.off('disconnect',                 onDisconnect);
-      socket.off('connect',                    onConnect);
+      if (cleanupHandlers) {
+        socket.off('existing-peers',             cleanupHandlers.onExistingPeers);
+        socket.off('user-joined',                cleanupHandlers.onUserJoined);
+        socket.off('room-participants-update',   cleanupHandlers.onParticipants);
+        socket.off('peer-left',                  cleanupHandlers.onPeerLeft);
+        socket.off('peer-disconnected',          cleanupHandlers.onPeerDisconnected);
+        socket.off('peer-reconnected',           cleanupHandlers.onPeerReconnected);
+        socket.off('speaker-translating-status', cleanupHandlers.onTranslating);
+        socket.off('live-caption-chunk',         cleanupHandlers.onCaption);
+        socket.off('new-chat-message',           cleanupHandlers.onNewChat);
+        socket.off('new-reaction',               cleanupHandlers.onReaction);
+        socket.off('poll-created',               cleanupHandlers.onPollCreated);
+        socket.off('poll-updated',               cleanupHandlers.onPollUpdated);
+        socket.off('host-muted-you',             cleanupHandlers.onHostMuted);
+        socket.off('removed-by-host',            cleanupHandlers.onRemoved);
+        socket.off('waiting-room-update',        cleanupHandlers.onWaitingUpdate);
+        socket.off('room-settings-updated',      cleanupHandlers.onRoomSettings);
+        socket.off('recording-status-update',    cleanupHandlers.onRecording);
+        socket.off('disconnect',                 cleanupHandlers.onDisconnect);
+        socket.off('connect',                    cleanupHandlers.onConnect);
+      }
     };
   }, [localStream, roomCode, socket.id]);
 
@@ -656,7 +683,12 @@ export default function VideoRoom({
               </div>
               <div className="flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-sm px-6 py-3 rounded-full border border-white/5">
                 <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-lg md:text-xl font-medium text-slate-200">Please wait until a meeting host brings you into the call</p>
+                <p className="text-lg md:text-xl font-medium text-slate-200">
+                  {connectionStatus === 'alone' ? 'Waiting for participant to join...' :
+                   connectionStatus === 'connecting' ? 'Connecting to peer...' :
+                   connectionStatus === 'failed' ? 'Connection failed. Attempting to reconnect...' :
+                   'Please wait...'}
+                </p>
               </div>
 
               {/* Mini Self-View like Google Meet */}

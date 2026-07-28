@@ -74,3 +74,60 @@ model VoiceConsentLog {
 
   session           CallSession @relation(fields: [call_session_id], references: [id], onDelete: Cascade)
 }
+
+// ── WebRTC & Signaling Models ──
+
+model CallRoom {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  room_code       String   @unique @db.VarChar(50)
+  created_by      String   @db.Uuid
+  status          String   @default("waiting") @db.VarChar(20)
+  created_at      DateTime @default(now())
+  ended_at        DateTime?
+
+  participants    CallParticipant[]
+  iceConfigs      IceServerConfig[]
+  signalingLogs   SignalingEventLog[]
+}
+
+model CallParticipant {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  call_room_id     String   @db.Uuid
+  user_id          String?  @db.Uuid
+  socket_id        String?  @db.VarChar(100)
+  role             String   @db.VarChar(20)
+  negotiation_role String?  @db.VarChar(10) // 'polite' or 'impolite'
+  connection_state String   @default("connecting") @db.VarChar(20)
+  joined_at        DateTime @default(now())
+  left_at          DateTime?
+
+  room             CallRoom @relation(fields: [call_room_id], references: [id], onDelete: Cascade)
+  signalingLogs    SignalingEventLog[]
+
+  @@index([call_room_id])
+}
+
+model IceServerConfig {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  call_room_id    String   @db.Uuid
+  urls            String[]
+  username        String?  @db.VarChar(100)
+  credential      String?  @db.VarChar(200)
+  expires_at      DateTime
+
+  room            CallRoom @relation(fields: [call_room_id], references: [id], onDelete: Cascade)
+}
+
+model SignalingEventLog {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  call_room_id    String   @db.Uuid
+  participant_id  String?  @db.Uuid
+  event_type      String   @db.VarChar(30)
+  payload         Json?
+  created_at      DateTime @default(now())
+
+  room            CallRoom @relation(fields: [call_room_id], references: [id], onDelete: Cascade)
+  participant     CallParticipant? @relation(fields: [participant_id], references: [id])
+
+  @@index([call_room_id])
+}

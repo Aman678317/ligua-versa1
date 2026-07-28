@@ -311,6 +311,17 @@ io.on('connection', (socket) => {
       session.participantsCount = room.participants.size;
     }
 
+    // Determine perfect negotiation role
+    // The first user (or host) is typically "impolite", subsequent users are "polite".
+    // This resolves offer/answer glare when both sides try to connect.
+    const isFirstParticipant = room.participants.size === 1;
+    const negotiationRole = isFirstParticipant ? 'impolite' : 'polite';
+    
+    // Update participant record with role
+    const participantData = room.participants.get(socket.id);
+    participantData.negotiationRole = negotiationRole;
+    room.participants.set(socket.id, participantData);
+
     // Initialize DB Call Session if not exists
     if (!room.call_session_id) {
       prisma.callSession.create({
@@ -324,14 +335,17 @@ io.on('connection', (socket) => {
       }).catch(err => console.error("Failed to create CallSession:", err));
     }
 
-    // Send existing peer IDs to the new joiner so they can initiate WebRTC offers
-    const existingPeerIds = Array.from(room.participants.keys()).filter(id => id !== socket.id);
-    socket.emit('existing-peers', { peerSocketIds: existingPeerIds });
+    // Send existing peer IDs and our own role so they can initiate WebRTC offers
+    const existingPeerIds = Array.from(room.participants.entries())
+      .filter(([id, _]) => id !== socket.id)
+      .map(([id, data]) => ({ socketId: id, negotiationRole: data.negotiationRole }));
+    
+    socket.emit('existing-peers', { peerSocketIds: existingPeerIds, myRole: negotiationRole });
 
     io.to(roomCode).emit('room-participants-update', Array.from(room.participants.values()));
     socket.emit('room-chat-history', room.messages);
     socket.emit('room-polls-history', room.polls);
-    socket.to(roomCode).emit('user-joined', { socketId: socket.id, user });
+    socket.to(roomCode).emit('user-joined', { socketId: socket.id, user, negotiationRole });
   });
 
   socket.on('recording-status-changed', ({ isRecording, recorderName }) => {
@@ -723,6 +737,21 @@ app.post('/api/meetings/end', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// WebRTC TURN Credentials API
+app.get('/api/turn-credentials', async (req, res) => {
+  // In a production app, we would fetch from Twilio Network Traversal or Metered API here.
+  // We'll return secure Metered OpenRelay credentials, simulating a dynamic fetch.
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+  ];
+
+  res.json({ success: true, iceServers });
 });
 
 const PORT = process.env.PORT || 3001;

@@ -1,55 +1,31 @@
 // Real Multi-Peer WebRTC & TURN Relay Service for LinguaVersa
-// Full fix: ICE candidate buffering + multi-STUN/TURN fallback + per-peer MediaStream management.
-
-const getIceServers = () => {
-  const customTurnUrl = import.meta.env?.VITE_TURN_URL;
-  const customUsername = import.meta.env?.VITE_TURN_USERNAME;
-  const customCredential = import.meta.env?.VITE_TURN_CREDENTIAL;
-
-  const iceServers = [
-    // High-availability public STUN servers
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.services.mozilla.com' },
-    { urls: 'stun:global.stun.twilio.com:3478' }
-  ];
-
-  if (customTurnUrl) {
-    iceServers.push({ urls: customTurnUrl, username: customUsername || '', credential: customCredential || '' });
-  } else {
-    // Metered OpenRELAY TURN fallbacks
-    iceServers.push(
-      { urls: 'turn:openrelay.metered.ca:80',           username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443',          username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turns:openrelay.metered.ca:443',         username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:a.relay.metered.ca:80',             username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:a.relay.metered.ca:443',            username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turns:a.relay.metered.ca:443',           username: 'openrelayproject', credential: 'openrelayproject' }
-    );
-  }
-
-  return { iceServers, iceCandidatePoolSize: 10, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' };
-};
+// Full fix: ICE candidate buffering + multi-STUN/TURN fallback + per-peer MediaStream management + Perfect Negotiation.
 
 export class WebRTCManager {
-  constructor(socket, localStream, onRemoteStreamAdded, onRemoteStreamRemoved, onIceStateChange) {
+  constructor(socket, localStream, iceServers, onRemoteStreamAdded, onRemoteStreamRemoved, onIceStateChange) {
     this.socket              = socket;
     this.localStream         = localStream;
+    this.iceServers          = iceServers || [{ urls: 'stun:stun.l.google.com:19302' }];
     this.onRemoteStreamAdded = onRemoteStreamAdded;
     this.onRemoteStreamRemoved = onRemoteStreamRemoved;
     this.onIceStateChange    = onIceStateChange;
+    
     this.peerConnections     = new Map();   // socketId → RTCPeerConnection
     this._peerStreams        = new Map();   // socketId → MediaStream
     this._iceBuffers         = new Map();   // socketId → RTCIceCandidate[]
     this._boundHandlers      = {};
+    
+    // Perfect negotiation state
+    this.myRole = 'polite'; // Default to polite, updated by caller
 
     console.log('[WebRTC] Manager initialized with local tracks:',
       localStream?.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', ') || 'none');
     this.setupSocketListeners();
+  }
+
+  setRole(role) {
+    this.myRole = role;
+    console.log(`[WebRTC] My negotiation role set to: ${this.myRole}`);
   }
 
   setupSocketListeners() {
@@ -57,13 +33,17 @@ export class WebRTCManager {
     const onOffer = async ({ senderSocketId, offer }) => {
       console.log(`[WebRTC] ← offer from ${senderSocketId}`);
       const pc = this.createPeerConnection(senderSocketId);
+      
+      const offerCollision = pc.makingOffer || pc.signalingState !== 'stable';
+      pc.ignoreOffer = !this.isPolite() && offerCollision;
+
+      if (pc.ignoreOffer) {
+        console.log(`[WebRTC] Ignoring offer from ${senderSocketId} (I am impolite and there is a collision)`);
+        return;
+      }
+
       try {
-        if (pc.signalingState !== 'stable') {
-          await pc.setLocalDescription({ type: 'rollback' });
-          await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        } else {
-          await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        }
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
         await this.flushIceBuffer(senderSocketId, pc);
 
         const answer = await pc.createAnswer();
@@ -81,10 +61,8 @@ export class WebRTCManager {
       const pc = this.peerConnections.get(senderSocketId);
       if (!pc) return;
       try {
-        if (pc.signalingState === 'have-local-offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          await this.flushIceBuffer(senderSocketId, pc);
-        }
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await this.flushIceBuffer(senderSocketId, pc);
       } catch (err) {
         console.error('[WebRTC] Answer handling error:', err);
       }
@@ -93,20 +71,23 @@ export class WebRTCManager {
     // ── Incoming ICE candidate ──────────────────────────────────────────────
     const onIce = async ({ senderSocketId, candidate }) => {
       const pc = this.peerConnections.get(senderSocketId);
-      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          if (!err.message?.includes('closed')) {
-            console.warn('[WebRTC] ICE candidate error:', err.message);
+      
+      try {
+        const iceCandidate = new RTCIceCandidate(candidate);
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+          if (pc.ignoreOffer) return;
+          await pc.addIceCandidate(iceCandidate);
+        } else {
+          // Buffer until remote description is set
+          if (!this._iceBuffers.has(senderSocketId)) {
+            this._iceBuffers.set(senderSocketId, []);
           }
+          this._iceBuffers.get(senderSocketId).push(candidate);
         }
-      } else {
-        // Buffer until remote description is set
-        if (!this._iceBuffers.has(senderSocketId)) {
-          this._iceBuffers.set(senderSocketId, []);
+      } catch (err) {
+        if (!err.message?.includes('closed')) {
+          console.warn('[WebRTC] ICE candidate error:', err.message);
         }
-        this._iceBuffers.get(senderSocketId).push(candidate);
       }
     };
 
@@ -122,6 +103,10 @@ export class WebRTCManager {
     this.socket.on('user-left',            onPeerGone);
     this.socket.on('peer-left',            onPeerGone);
     this._boundHandlers = { onOffer, onAnswer, onIce, onPeerGone };
+  }
+
+  isPolite() {
+    return this.myRole === 'polite';
   }
 
   async flushIceBuffer(targetSocketId, pc) {
@@ -144,7 +129,16 @@ export class WebRTCManager {
     }
     existing?.close();
 
-    const pc = new RTCPeerConnection(getIceServers());
+    const config = {
+      iceServers: this.iceServers,
+      iceCandidatePoolSize: 10, 
+      bundlePolicy: 'max-bundle', 
+      rtcpMuxPolicy: 'require'
+    };
+
+    const pc = new RTCPeerConnection(config);
+    pc.makingOffer = false;
+    pc.ignoreOffer = false;
     this.peerConnections.set(targetSocketId, pc);
 
     // ── Attach local tracks ─────────────────────────────────────────────────
@@ -156,6 +150,21 @@ export class WebRTCManager {
         } catch (e) { console.warn('[WebRTC] addTrack error:', e); }
       });
     }
+
+    // ── Perfect Negotiation trigger ─────────────────────────────────────────
+    pc.onnegotiationneeded = async () => {
+      console.log(`[WebRTC] Negotiation needed for ${targetSocketId}`);
+      try {
+        pc.makingOffer = true;
+        await pc.setLocalDescription();
+        this.socket.emit('webrtc-offer', { targetSocketId, offer: pc.localDescription });
+        console.log(`[WebRTC] → offer sent to ${targetSocketId}`);
+      } catch (err) {
+        console.error('[WebRTC] Negotiation error:', err);
+      } finally {
+        pc.makingOffer = false;
+      }
+    };
 
     // ── ICE candidate relay ─────────────────────────────────────────────────
     pc.onicecandidate = ({ candidate }) => {
@@ -173,7 +182,6 @@ export class WebRTCManager {
       console.log(`[WebRTC] ← remote ${track.kind} track from ${targetSocketId}`);
       let peerStream = this._peerStreams.get(targetSocketId);
       if (!peerStream) {
-        // Create a new blank stream so we can safely add/remove tracks
         peerStream = new MediaStream();
         this._peerStreams.set(targetSocketId, peerStream);
       }
@@ -202,6 +210,7 @@ export class WebRTCManager {
       const state = pc.iceConnectionState;
       console.log(`[WebRTC] ICE connection state for ${targetSocketId}: ${state}`);
       if (this.onIceStateChange) this.onIceStateChange(targetSocketId, state);
+      
       if (state === 'failed') {
         console.warn(`[WebRTC] ICE failed for ${targetSocketId} – attempting restart`);
         this.attemptIceRestart(targetSocketId);
@@ -212,24 +221,11 @@ export class WebRTCManager {
     return pc;
   }
 
-  // ── Send SDP offer ─────────────────────────────────────────────────────────
+  // ── Manual Offer (for legacy support if needed) ─────────────────────────
   async initiateOffer(targetSocketId) {
-    console.log(`[WebRTC] → initiating offer to ${targetSocketId}`);
-    const pc = this.createPeerConnection(targetSocketId);
-
-    if (pc.signalingState !== 'stable') {
-      console.warn(`[WebRTC] Skipping offer – signalingState: ${pc.signalingState}`);
-      return;
-    }
-
-    try {
-      const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
-      await pc.setLocalDescription(offer);
-      this.socket.emit('webrtc-offer', { targetSocketId, offer });
-      console.log(`[WebRTC] → offer sent to ${targetSocketId}`);
-    } catch (err) {
-      console.error('[WebRTC] Offer creation error:', err);
-    }
+    // With perfect negotiation, we usually just let onnegotiationneeded fire.
+    // We can force it by calling createPeerConnection.
+    this.createPeerConnection(targetSocketId);
   }
 
   // ── ICE restart ────────────────────────────────────────────────────────────
@@ -237,12 +233,15 @@ export class WebRTCManager {
     const pc = this.peerConnections.get(targetSocketId);
     if (!pc || pc.connectionState === 'closed') return;
     try {
+      pc.makingOffer = true;
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       this.socket.emit('webrtc-offer', { targetSocketId, offer });
       console.log(`[WebRTC] ICE restart sent to ${targetSocketId}`);
     } catch (err) {
       console.error('[WebRTC] ICE restart error:', err);
+    } finally {
+      pc.makingOffer = false;
     }
   }
 
@@ -255,7 +254,6 @@ export class WebRTCManager {
     for (const [targetSocketId, pc] of this.peerConnections.entries()) {
       if (pc.connectionState === 'closed') continue;
       const senders = pc.getSenders();
-      let needsRenegotiation = false;
 
       for (const track of newStream.getTracks()) {
         const sender = senders.find(s => s.track?.kind === track.kind);
@@ -263,10 +261,9 @@ export class WebRTCManager {
           await sender.replaceTrack(track).catch(e => console.warn('[WebRTC] replaceTrack error:', e));
         } else {
           pc.addTrack(track, newStream);
-          needsRenegotiation = true;
+          // onnegotiationneeded will fire automatically.
         }
       }
-      if (needsRenegotiation) await this.initiateOffer(targetSocketId);
     }
   }
 
