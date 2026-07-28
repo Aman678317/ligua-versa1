@@ -1,5 +1,7 @@
 # LinguaVersa — Live Speech Translation Video Calling Platform
 
+![Topics](https://img.shields.io/github/search/LinguaVersa/voice-translator?label=Topics&message=voice-translator%20%7C%20real-time-translation%20%7C%20speech-to-speech)
+
 A real-time video-calling platform where every participant speaks and hears their own language in real time — featuring live speech-to-speech translation, dual-language captions, AI meeting summaries, host controls, screen sharing, and an admin telemetry dashboard.
 
 ---
