@@ -58,10 +58,8 @@ export class WebRTCManager {
       const pc = this.createPeerConnection(senderSocketId);
       try {
         if (pc.signalingState !== 'stable') {
-          await Promise.all([
-            pc.setLocalDescription({ type: 'rollback' }),
-            pc.setRemoteDescription(new RTCSessionDescription(offer))
-          ]);
+          await pc.setLocalDescription({ type: 'rollback' });
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
         } else {
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
         }
@@ -174,13 +172,18 @@ export class WebRTCManager {
       console.log(`[WebRTC] ← remote ${track.kind} track from ${targetSocketId}`);
       let peerStream = this._peerStreams.get(targetSocketId);
       if (!peerStream) {
-        peerStream = (streams && streams[0]) ? streams[0] : new MediaStream();
+        // Create a new blank stream so we can safely add/remove tracks
+        peerStream = new MediaStream();
         this._peerStreams.set(targetSocketId, peerStream);
       }
 
       const existingIds = peerStream.getTracks().map(t => t.id);
       if (!existingIds.includes(track.id)) {
-        peerStream.addTrack(track);
+        try {
+          peerStream.addTrack(track);
+        } catch (e) {
+          console.warn('[WebRTC] addTrack on peerStream failed:', e);
+        }
       }
 
       const trackCount = peerStream.getTracks().length;

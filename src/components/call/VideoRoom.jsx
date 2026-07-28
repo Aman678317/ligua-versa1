@@ -33,7 +33,14 @@ function createDummyStream() {
   ctx.textAlign = 'center';
   ctx.fillText('Camera Offline / Blocked', 320, 240);
 
-  const videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+  let videoTrack = null;
+  try {
+    if (canvas.captureStream) {
+      videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+    }
+  } catch (e) {
+    console.warn('[VideoRoom] canvas.captureStream not supported:', e);
+  }
 
   let audioTrack = null;
   try {
@@ -48,7 +55,8 @@ function createDummyStream() {
     console.warn('[VideoRoom] AudioContext fallback failed:', e);
   }
 
-  const tracks = [videoTrack];
+  const tracks = [];
+  if (videoTrack) tracks.push(videoTrack);
   if (audioTrack) tracks.push(audioTrack);
   return new MediaStream(tracks);
 }
