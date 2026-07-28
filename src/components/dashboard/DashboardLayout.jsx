@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import HoloEarth from '../canvas/HoloEarth';
 import NewMeetingDropdown from '../landing/NewMeetingDropdown';
+import LandingCarousel from '../landing/LandingCarousel';
 
 export default function DashboardLayout({ 
   currentUser, 
@@ -150,36 +151,8 @@ export default function DashboardLayout({
           </div>
 
           {/* Right Column: Hero Graphic Preview */}
-          <div className="lg:col-span-5 flex justify-center">
-            <div className="relative w-full max-w-md bg-[#0A0E1A]/80 border border-white/10 rounded-3xl p-6 shadow-2xl backdrop-blur-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-xs font-bold text-white">Live Translation Preview</span>
-                </div>
-                <span className="text-[10px] font-mono bg-cyan-500/20 text-[#00E5C7] px-2 py-0.5 rounded font-bold">P75 &lt; 2.1s</span>
-              </div>
-
-              <div className="space-y-3">
-                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-white/10 text-xs space-y-1">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span className="font-bold text-slate-200">Kenji Sato (Tokyo)</span>
-                    <span className="text-cyan-400 font-mono">JA ➔ EN</span>
-                  </div>
-                  <p className="text-white font-medium">「来週のデプロイの準備はできていますか？」</p>
-                  <p className="text-[#00E5C7] text-[11px]">"Are you ready for next week's deployment?"</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-white/10 text-xs space-y-1">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span className="font-bold text-slate-200">Aman Sharma (Mumbai)</span>
-                    <span className="text-indigo-400 font-mono">EN ➔ JA</span>
-                  </div>
-                  <p className="text-white font-medium">"Yes, all services are online."</p>
-                  <p className="text-indigo-300 text-[11px]">「はい、すべてのサービスがオンラインです。」</p>
-                </div>
-              </div>
-            </div>
+          <div className="lg:col-span-5 flex justify-center lg:justify-end">
+            <LandingCarousel />
           </div>
 
         </div>
