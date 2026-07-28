@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, PhoneOff,
   MessageSquare, Shield, BarChart2, Sparkles, Users, LayoutGrid, User,
-  Copy, Check, Share2, AlertCircle, Disc, Wifi, WifiOff, Camera
+  Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera
 } from 'lucide-react';
 import DualCaptionsOverlay from './DualCaptionsOverlay';
 import HostControlsModal from './HostControlsModal';
@@ -19,11 +19,14 @@ import { WebRTCManager } from '../../services/webrtc';
 import { getSocket } from '../../services/socket';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VideoRoom — Native WebRTC multi-peer video call
+// VideoRoom — Native WebRTC peer-to-peer video call
 //
-// KEY DESIGN:  The WebRTC manager and socket room join happen ONLY AFTER
-//              the local MediaStream is successfully captured. This eliminates
-//              the race condition where offers were sent with zero media tracks.
+// FIX SUMMARY:
+//  1. WebRTC manager created ONLY after localStream is ready (no null stream)
+//  2. remotePeers tracks { stream, trackCount, hasVideo } so React re-renders
+//     when the VIDEO track arrives AFTER the audio track (ontrack fires twice)
+//  3. VideoTile ALWAYS renders the <video> element (hidden via CSS when no video)
+//     so WebRTC AUDIO plays even when the camera is off or stream has no video
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VideoRoom({
   roomCode, currentUser, selectedLanguage, setSelectedLanguage,
@@ -31,25 +34,23 @@ export default function VideoRoom({
 }) {
   const socket = getSocket();
 
-  // ── Media ─────────────────────────────────────────────────────────────────
+  // ── Local media ────────────────────────────────────────────────────────────
   const [localStream, setLocalStream]     = useState(null);
   const [isMuted, setIsMuted]             = useState(false);
   const [isVideoOn, setIsVideoOn]         = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const localStreamRef                    = useRef(null);
 
-  // ── Remote peers: { socketId: { stream, name, spokenLanguage } } ──────────
+  // ── Remote peers ───────────────────────────────────────────────────────────
+  // { socketId: { stream, trackCount, hasVideo, name, spokenLanguage } }
   const [remotePeers, setRemotePeers]     = useState({});
   const webrtcManagerRef                  = useRef(null);
+  const hasJoinedRef                      = useRef(false);
 
-  // ── Room join guard (prevent double-join if stream changes) ───────────────
-  const hasJoinedRef   = useRef(false);
-  const pendingPeersRef = useRef([]);   // buffer peer IDs before manager ready
-
-  // ── Socket participants (for metadata) ────────────────────────────────────
+  // ── Socket participants (metadata) ─────────────────────────────────────────
   const [socketParticipants, setSocketParticipants] = useState([]);
 
-  // ── UI ────────────────────────────────────────────────────────────────────
+  // ── UI ─────────────────────────────────────────────────────────────────────
   const [copiedLink, setCopiedLink]       = useState(false);
   const [isChatOpen, setIsChatOpen]       = useState(false);
   const [isHostControlsOpen, setIsHostControlsOpen] = useState(false);
@@ -58,33 +59,30 @@ export default function VideoRoom({
   const [showCaptions, setShowCaptions]   = useState(true);
   const [layoutMode, setLayoutMode]       = useState('gallery');
 
-  // ── Connection status ─────────────────────────────────────────────────────
+  // ── Connection status ──────────────────────────────────────────────────────
   const [connectionStatus, setConnectionStatus] = useState('waiting');
-  // 'waiting' | 'connecting' | 'connected' | 'alone'
   const [isReconnecting, setIsReconnecting]     = useState(false);
   const [peerBanner, setPeerBanner]             = useState(null);
 
-  // ── Audio visualiser ──────────────────────────────────────────────────────
+  // ── Audio visualiser ───────────────────────────────────────────────────────
   const [volumeLevel, setVolumeLevel]     = useState(0);
   const [frequencyData, setFrequencyData] = useState([]);
   const audioMixerRef                     = useRef(null);
 
-  // ── Chat / Polls / Reactions ──────────────────────────────────────────────
+  // ── Chat / Polls / Reactions ───────────────────────────────────────────────
   const [chatMessages, setChatMessages]   = useState([]);
   const [polls, setPolls]                 = useState([]);
   const [floatingReactions, setFloatingReactions] = useState([]);
-
-  // ── Room settings ─────────────────────────────────────────────────────────
   const [waitingRoomList, setWaitingRoomList] = useState([]);
   const [roomSettings, setRoomSettings]   = useState({ isLocked: false, waitingRoomEnabled: false });
 
-  // ── Recording ─────────────────────────────────────────────────────────────
+  // ── Recording ──────────────────────────────────────────────────────────────
   const [isRecording, setIsRecording]     = useState(false);
   const [recorderName, setRecorderName]   = useState('');
   const mediaRecorderRef                  = useRef(null);
   const recordedChunksRef                 = useRef([]);
 
-  // ── AI captions ───────────────────────────────────────────────────────────
+  // ── AI captions ────────────────────────────────────────────────────────────
   const [translatingSpeakers, setTranslatingSpeakers] = useState({});
   const [activeDubbingSpeaker, setActiveDubbingSpeaker] = useState(null);
   const captionSyncRef  = useRef(new CaptionSynchronizer());
@@ -92,57 +90,52 @@ export default function VideoRoom({
   const [currentCaption, setCurrentCaption] = useState({
     id: 'c-init', speakerId: 'system', speakerName: 'LinguaVersa',
     sourceLang: 'en', targetLang: selectedLanguage,
-    originalText: 'Real-time speech translation active — speak into your mic!',
+    originalText: 'Real-time translation active — speak into your mic!',
     translatedText: 'リアルタイム翻訳が有効です！',
-    timestamp: new Date().toISOString(),
-    metrics: { totalLatencyMs: 590 }
+    timestamp: new Date().toISOString(), metrics: { totalLatencyMs: 590 }
   });
 
   const [isHost, setIsHost] = useState(false);
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 1 — Capture local camera + mic
-  //          This runs first, before ANYTHING WebRTC-related.
+  // STEP 1 — Capture local camera + mic (loose constraints for compatibility)
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     let mounted = true;
-    let capturedStream = null;
+    let captured = null;
 
     const capture = async () => {
       try {
-        // Try video + audio
-        capturedStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
+        // Loose constraints — works on phones, tablets, old laptops
+        captured = await navigator.mediaDevices.getUserMedia({
+          video: true,           // just "true" — let browser choose best settings
+          audio: { echoCancellation: true, noiseSuppression: true }
         }).catch(() =>
-          // Fallback: audio only
-          navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-            .catch(() => null)
+          // Camera failed → try audio only
+          navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null)
         );
 
-        if (!capturedStream || !mounted) return;
+        if (!captured || !mounted) return;
+        localStreamRef.current = captured;
+        setLocalStream(captured);
 
-        localStreamRef.current = capturedStream;
-        setLocalStream(capturedStream);
-
-        // Audio visualiser
         const mixer = new AudioMixer();
         audioMixerRef.current = mixer;
-        mixer.initialize(capturedStream);
+        mixer.initialize(captured);
 
-        console.log('[VideoRoom] ✅ Local stream ready:', capturedStream.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
+        console.log('[VideoRoom] ✅ Local stream ready:',
+          captured.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
       } catch (err) {
         console.error('[VideoRoom] getUserMedia failed:', err);
       }
     };
 
     capture();
-
     return () => {
       mounted = false;
-      if (capturedStream) capturedStream.getTracks().forEach(t => t.stop());
-      if (audioMixerRef.current) audioMixerRef.current.stop();
+      captured?.getTracks().forEach(t => t.stop());
+      audioMixerRef.current?.stop();
     };
   }, []);
 
@@ -158,61 +151,58 @@ export default function VideoRoom({
   }, []);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // WebRTC callbacks (stable refs — never change, safe to use in closures)
+  // WebRTC callbacks
   // ═══════════════════════════════════════════════════════════════════════════
-  const handleRemoteStreamAdded = useCallback((peerId, stream) => {
-    console.log('[VideoRoom] ✅ Remote stream added for', peerId);
-    setRemotePeers(prev => ({ ...prev, [peerId]: { ...(prev[peerId] || {}), stream } }));
+
+  // Called by WebRTCManager.ontrack — once for audio track, once for video track
+  // trackCount and hasVideo change each time → React re-renders the video tile
+  const handleRemoteStreamAdded = useCallback((peerId, stream, trackCount, hasVideo) => {
+    console.log(`[VideoRoom] Remote stream update for ${peerId}: ${trackCount} track(s), hasVideo=${hasVideo}`);
+    setRemotePeers(prev => ({
+      ...prev,
+      [peerId]: {
+        ...(prev[peerId] || {}),
+        stream,
+        trackCount: trackCount || 0,
+        hasVideo:   hasVideo || false,
+      }
+    }));
     setConnectionStatus('connected');
   }, []);
 
   const handleRemoteStreamRemoved = useCallback((peerId) => {
-    console.log('[VideoRoom] Remote stream removed for', peerId);
     setRemotePeers(prev => { const n = { ...prev }; delete n[peerId]; return n; });
   }, []);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 2 — Once local stream is ready: join socket room + init WebRTC
-  //
-  //  ⚠ This is the CRITICAL fix: we WAIT for localStream before doing
-  //    anything with WebRTC, so offers always carry real media tracks.
+  // STEP 2 — Join room + init WebRTC ONLY after local stream is ready
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!localStream) return;           // wait until camera/mic is ready
-    if (hasJoinedRef.current) return;   // only join once
+    if (!localStream) return;
+    if (hasJoinedRef.current) return;
     hasJoinedRef.current = true;
 
-    console.log('[VideoRoom] Local stream ready — joining room and setting up WebRTC');
+    console.log('[VideoRoom] Stream ready — joining room');
 
-    // ── Validate host status ─────────────────────────────────────────────
     fetch(`/api/calls/${roomCode}`)
       .then(r => r.json())
       .then(d => { if (d.session?.hostId === currentUser?.id) setIsHost(true); })
       .catch(() => {});
 
-    // ── Speech translation ───────────────────────────────────────────────
     const speechService = new SpeechTranslationService(socket, selectedLanguage, selectedLanguage, currentUser.name);
     speechServiceRef.current = speechService;
     speechService.start(localStream);
 
-    // ── Create WebRTC manager WITH the actual stream ─────────────────────
+    // Create WebRTC manager WITH the real stream — offers will carry tracks
     const rtcManager = new WebRTCManager(socket, localStream, handleRemoteStreamAdded, handleRemoteStreamRemoved);
     webrtcManagerRef.current = rtcManager;
 
-    // ── Join the socket room ─────────────────────────────────────────────
     socket.emit('join-room', {
       roomCode,
-      user: {
-        id: currentUser.id,
-        name: currentUser.name,
-        avatar: currentUser.avatar,
-        isHost: false,
-        spokenLanguage: selectedLanguage
-      }
+      user: { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar, isHost: false, spokenLanguage: selectedLanguage }
     });
 
-    // ── existing-peers: server tells us who is ALREADY in the room ───────
-    // We (the newcomer) initiate offers to all of them.
+    // ── Existing peers → we initiate offers (we are the newcomer) ─────────
     const onExistingPeers = ({ peerSocketIds }) => {
       console.log('[VideoRoom] existing-peers:', peerSocketIds);
       if (peerSocketIds.length === 0) {
@@ -223,8 +213,7 @@ export default function VideoRoom({
       }
     };
 
-    // ── user-joined: a NEW peer joined AFTER us — they will offer to us.
-    // Just update metadata so we show their name while waiting.
+    // ── New peer joined → they will send us an offer; just track metadata ─
     const onUserJoined = ({ socketId, user }) => {
       console.log('[VideoRoom] user-joined:', socketId, user?.name);
       setConnectionStatus('connecting');
@@ -234,7 +223,6 @@ export default function VideoRoom({
       }));
     };
 
-    // ── Room participants metadata ────────────────────────────────────────
     const onParticipants = (participants) => {
       setSocketParticipants(participants);
       participants.forEach(p => {
@@ -247,21 +235,19 @@ export default function VideoRoom({
       });
     };
 
-    // ── Peer left ────────────────────────────────────────────────────────
     const onPeerLeft = ({ socketId }) => {
       rtcManager.closePeerConnection(socketId);
       setRemotePeers(prev => { const n = { ...prev }; delete n[socketId]; return n; });
       setPeerBanner(null);
     };
 
-    const onPeerDisconnected = ({ socketId, user }) => setPeerBanner(user?.name || 'Participant');
-    const onPeerReconnected  = () => setPeerBanner(null);
+    const onPeerDisconnected = ({ user })  => setPeerBanner(user?.name || 'Participant');
+    const onPeerReconnected  = ()          => setPeerBanner(null);
 
-    // ── AI captions ───────────────────────────────────────────────────────
-    const onTranslatingStatus = ({ speakerId, isTranslating }) =>
+    const onTranslating = ({ speakerId, isTranslating }) =>
       setTranslatingSpeakers(prev => ({ ...prev, [speakerId]: isTranslating }));
 
-    const onCaptionChunk = (caption) => {
+    const onCaption = (caption) => {
       setCurrentCaption(captionSyncRef.current.pushChunk(caption));
       if (caption.audioBase64 && caption.speakerId !== socket.id) {
         setActiveDubbingSpeaker(caption.speakerId);
@@ -273,61 +259,44 @@ export default function VideoRoom({
       }
     };
 
-    // ── Chat ──────────────────────────────────────────────────────────────
-    const onNewChat = (msg) => setChatMessages(prev => [...prev, msg]);
-
-    // ── Reactions ─────────────────────────────────────────────────────────
-    const onReaction = ({ emoji }) => {
+    const onNewChat   = (msg) => setChatMessages(prev => [...prev, msg]);
+    const onReaction  = ({ emoji }) => {
       const obj = { id: `r-${Date.now()}`, emoji, x: Math.floor(Math.random() * 80) + 10, rotate: Math.floor(Math.random() * 40) - 20 };
       setFloatingReactions(prev => [...prev, obj]);
       setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== obj.id)), 4000);
     };
-
-    // ── Polls ─────────────────────────────────────────────────────────────
-    const onPollCreated = (p) => setPolls(prev => [...prev, p]);
-    const onPollUpdated = (p) => setPolls(prev => prev.map(x => x.id === p.id ? p : x));
-
-    // ── Host events ───────────────────────────────────────────────────────
-    const onHostMuted = () => {
-      localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
-      setIsMuted(true);
-    };
-    const onRemoved = () => { alert('You have been removed by the host.'); onLeaveCall(); };
-    const onWaitingUpdate = (list) => setWaitingRoomList(list);
-    const onRoomSettings  = (s) => setRoomSettings(s);
-
-    // ── Recording banner ──────────────────────────────────────────────────
-    const onRecording = ({ isRecording: r, recorderName: n }) => { setIsRecording(r); setRecorderName(n || 'Host'); };
-
-    // ── Reconnect ─────────────────────────────────────────────────────────
-    const onDisconnect = () => { setIsReconnecting(true); setConnectionStatus('connecting'); };
-    const onConnect    = () => {
+    const onPollCreated   = (p)  => setPolls(prev => [...prev, p]);
+    const onPollUpdated   = (p)  => setPolls(prev => prev.map(x => x.id === p.id ? p : x));
+    const onHostMuted     = ()   => { localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; }); setIsMuted(true); };
+    const onRemoved       = ()   => { alert('You have been removed by the host.'); onLeaveCall(); };
+    const onWaitingUpdate = (l)  => setWaitingRoomList(l);
+    const onRoomSettings  = (s)  => setRoomSettings(s);
+    const onRecording     = ({ isRecording: r, recorderName: n }) => { setIsRecording(r); setRecorderName(n || 'Host'); };
+    const onDisconnect    = ()   => { setIsReconnecting(true); setConnectionStatus('connecting'); };
+    const onConnect       = ()   => {
       setIsReconnecting(false);
-      socket.emit('rejoin-session', {
-        roomCode, user: { name: currentUser.name, spokenLanguage: selectedLanguage }, previousSocketId: socket.id
-      });
+      socket.emit('rejoin-session', { roomCode, user: { name: currentUser.name, spokenLanguage: selectedLanguage }, previousSocketId: socket.id });
     };
 
-    // Bind all listeners
-    socket.on('existing-peers',            onExistingPeers);
-    socket.on('user-joined',               onUserJoined);
-    socket.on('room-participants-update',  onParticipants);
-    socket.on('peer-left',                 onPeerLeft);
-    socket.on('peer-disconnected',         onPeerDisconnected);
-    socket.on('peer-reconnected',          onPeerReconnected);
-    socket.on('speaker-translating-status', onTranslatingStatus);
-    socket.on('live-caption-chunk',        onCaptionChunk);
-    socket.on('new-chat-message',          onNewChat);
-    socket.on('new-reaction',              onReaction);
-    socket.on('poll-created',              onPollCreated);
-    socket.on('poll-updated',              onPollUpdated);
-    socket.on('host-muted-you',            onHostMuted);
-    socket.on('removed-by-host',           onRemoved);
-    socket.on('waiting-room-update',       onWaitingUpdate);
-    socket.on('room-settings-updated',     onRoomSettings);
-    socket.on('recording-status-update',   onRecording);
-    socket.on('disconnect',                onDisconnect);
-    socket.on('connect',                   onConnect);
+    socket.on('existing-peers',             onExistingPeers);
+    socket.on('user-joined',                onUserJoined);
+    socket.on('room-participants-update',   onParticipants);
+    socket.on('peer-left',                  onPeerLeft);
+    socket.on('peer-disconnected',          onPeerDisconnected);
+    socket.on('peer-reconnected',           onPeerReconnected);
+    socket.on('speaker-translating-status', onTranslating);
+    socket.on('live-caption-chunk',         onCaption);
+    socket.on('new-chat-message',           onNewChat);
+    socket.on('new-reaction',               onReaction);
+    socket.on('poll-created',               onPollCreated);
+    socket.on('poll-updated',               onPollUpdated);
+    socket.on('host-muted-you',             onHostMuted);
+    socket.on('removed-by-host',            onRemoved);
+    socket.on('waiting-room-update',        onWaitingUpdate);
+    socket.on('room-settings-updated',      onRoomSettings);
+    socket.on('recording-status-update',    onRecording);
+    socket.on('disconnect',                 onDisconnect);
+    socket.on('connect',                    onConnect);
 
     return () => {
       hasJoinedRef.current = false;
@@ -335,27 +304,27 @@ export default function VideoRoom({
       socket.emit('leave-session');
       rtcManager.destroy();
 
-      socket.off('existing-peers',            onExistingPeers);
-      socket.off('user-joined',               onUserJoined);
-      socket.off('room-participants-update',  onParticipants);
-      socket.off('peer-left',                 onPeerLeft);
-      socket.off('peer-disconnected',         onPeerDisconnected);
-      socket.off('peer-reconnected',          onPeerReconnected);
-      socket.off('speaker-translating-status', onTranslatingStatus);
-      socket.off('live-caption-chunk',        onCaptionChunk);
-      socket.off('new-chat-message',          onNewChat);
-      socket.off('new-reaction',              onReaction);
-      socket.off('poll-created',              onPollCreated);
-      socket.off('poll-updated',              onPollUpdated);
-      socket.off('host-muted-you',            onHostMuted);
-      socket.off('removed-by-host',           onRemoved);
-      socket.off('waiting-room-update',       onWaitingUpdate);
-      socket.off('room-settings-updated',     onRoomSettings);
-      socket.off('recording-status-update',   onRecording);
-      socket.off('disconnect',                onDisconnect);
-      socket.off('connect',                   onConnect);
+      socket.off('existing-peers',             onExistingPeers);
+      socket.off('user-joined',                onUserJoined);
+      socket.off('room-participants-update',   onParticipants);
+      socket.off('peer-left',                  onPeerLeft);
+      socket.off('peer-disconnected',          onPeerDisconnected);
+      socket.off('peer-reconnected',           onPeerReconnected);
+      socket.off('speaker-translating-status', onTranslating);
+      socket.off('live-caption-chunk',         onCaption);
+      socket.off('new-chat-message',           onNewChat);
+      socket.off('new-reaction',               onReaction);
+      socket.off('poll-created',               onPollCreated);
+      socket.off('poll-updated',               onPollUpdated);
+      socket.off('host-muted-you',             onHostMuted);
+      socket.off('removed-by-host',            onRemoved);
+      socket.off('waiting-room-update',        onWaitingUpdate);
+      socket.off('room-settings-updated',      onRoomSettings);
+      socket.off('recording-status-update',    onRecording);
+      socket.off('disconnect',                 onDisconnect);
+      socket.off('connect',                    onConnect);
     };
-  }, [localStream, roomCode]); // ← ONLY runs once localStream is ready
+  }, [localStream, roomCode]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Controls
@@ -374,33 +343,27 @@ export default function VideoRoom({
 
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
-      const camTrack = localStreamRef.current?.getVideoTracks()[0];
-      if (camTrack && webrtcManagerRef.current) {
-        webrtcManagerRef.current.peerConnections.forEach(pc => {
-          pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(camTrack).catch(() => {});
-        });
-      }
+      const cam = localStreamRef.current?.getVideoTracks()[0];
+      webrtcManagerRef.current?.peerConnections.forEach(pc =>
+        pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(cam).catch(() => {})
+      );
       setIsScreenSharing(false);
     } else {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        const screenTrack = screenStream.getVideoTracks()[0];
-        if (webrtcManagerRef.current) {
-          webrtcManagerRef.current.peerConnections.forEach(pc => {
-            pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(screenTrack).catch(() => {});
-          });
-        }
-        screenTrack.onended = () => {
+        const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        const st = ss.getVideoTracks()[0];
+        webrtcManagerRef.current?.peerConnections.forEach(pc =>
+          pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(st).catch(() => {})
+        );
+        st.onended = () => {
           setIsScreenSharing(false);
-          const camTrack = localStreamRef.current?.getVideoTracks()[0];
-          if (camTrack && webrtcManagerRef.current) {
-            webrtcManagerRef.current.peerConnections.forEach(pc => {
-              pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(camTrack).catch(() => {});
-            });
-          }
+          const cam = localStreamRef.current?.getVideoTracks()[0];
+          webrtcManagerRef.current?.peerConnections.forEach(pc =>
+            pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(cam).catch(() => {})
+          );
         };
         setIsScreenSharing(true);
-      } catch (err) { console.warn('[ScreenShare] Cancelled:', err); }
+      } catch (e) { console.warn('[ScreenShare]', e); }
     }
   };
 
@@ -419,8 +382,7 @@ export default function VideoRoom({
         mr.ondataavailable = (e) => { if (e.data?.size > 0) recordedChunksRef.current.push(e.data); };
         mr.onstop = () => {
           const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-          const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `call-${roomCode}-${Date.now()}.webm` });
-          a.click();
+          Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `call-${roomCode}-${Date.now()}.webm` }).click();
         };
         mr.start(1000);
         setIsRecording(true);
@@ -430,24 +392,37 @@ export default function VideoRoom({
   };
 
   const handleCopyLink = () => { navigator.clipboard.writeText(shareableJoinUrl); setCopiedLink(true); setTimeout(() => setCopiedLink(false), 2500); };
-  const handleWhatsAppShare = () => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my call!\n${shareableJoinUrl}`)}`, '_blank');
+  const handleWhatsApp = () => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my call!\n${shareableJoinUrl}`)}`, '_blank');
   const triggerReaction = (emoji) => socket.emit('send-reaction', { emoji });
   const sendChat = ({ text, originalLang, file }) => {
-    const opt = { id: `o-${Date.now()}`, senderId: socket.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, text, translatedText: text, originalLang: originalLang || selectedLanguage, targetLang: selectedLanguage, file, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    setChatMessages(prev => [...prev, opt]);
+    setChatMessages(prev => [...prev, { id: `o-${Date.now()}`, senderId: socket.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, text, translatedText: text, originalLang: originalLang || selectedLanguage, targetLang: selectedLanguage, file, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     socket.emit('send-chat-message', { text, originalLang: selectedLanguage, file });
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Build display list
   // ═══════════════════════════════════════════════════════════════════════════
-  const localVideoTrack = localStream?.getVideoTracks()[0] || null;
   const allParticipants = [
-    { id: socket.id || currentUser.id, name: currentUser.name || 'You', isLocal: true, stream: localStream, videoTrack: localVideoTrack, isVideoActive: isVideoOn && !!localVideoTrack, audio: !isMuted, spokenLanguage: selectedLanguage },
-    ...Object.entries(remotePeers).map(([peerId, peer]) => {
-      const vt = peer.stream?.getVideoTracks()[0] || null;
-      return { id: peerId, name: peer.name || 'Participant', isLocal: false, stream: peer.stream || null, videoTrack: vt, isVideoActive: !!vt, audio: true, spokenLanguage: peer.spokenLanguage || 'en' };
-    })
+    {
+      id: socket.id || currentUser.id,
+      name: currentUser.name || 'You',
+      isLocal: true,
+      stream: localStream,
+      hasVideo: isVideoOn && !!(localStream?.getVideoTracks()[0]),
+      trackCount: localStream?.getTracks().length || 0,
+      audio: !isMuted,
+      spokenLanguage: selectedLanguage
+    },
+    ...Object.entries(remotePeers).map(([peerId, peer]) => ({
+      id: peerId,
+      name: peer.name || 'Participant',
+      isLocal: false,
+      stream: peer.stream || null,
+      hasVideo: peer.hasVideo || false,
+      trackCount: peer.trackCount || 0,
+      audio: true,
+      spokenLanguage: peer.spokenLanguage || 'en'
+    }))
   ];
 
   const getGridClass = (n) => {
@@ -458,13 +433,13 @@ export default function VideoRoom({
     return 'grid-cols-3 md:grid-cols-4 max-w-7xl';
   };
 
-  const statusColors = {
-    alone:      { icon: <Wifi className="w-3.5 h-3.5"/>, text: 'Waiting for others…', cls: 'text-amber-400' },
-    connecting: { icon: <div className="w-3 h-3 rounded-full border border-cyan-400 border-t-transparent animate-spin"/>, text: 'Connecting…', cls: 'text-cyan-400' },
-    connected:  { icon: <Wifi className="w-3.5 h-3.5"/>, text: 'Live', cls: 'text-emerald-400' },
-    waiting:    { icon: <Camera className="w-3.5 h-3.5"/>, text: 'Starting camera…', cls: 'text-slate-400' },
+  const stMap = {
+    alone:      { text: 'Waiting for others…',   cls: 'text-amber-400' },
+    connecting: { text: 'Connecting…',            cls: 'text-cyan-400'  },
+    connected:  { text: 'Live',                   cls: 'text-emerald-400' },
+    waiting:    { text: 'Starting camera…',       cls: 'text-slate-400' },
   };
-  const st = statusColors[connectionStatus] || statusColors.waiting;
+  const st = stMap[connectionStatus] || stMap.waiting;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -475,16 +450,16 @@ export default function VideoRoom({
       <SpeechCanvas3D isSpeaking={!isMuted} frequencyData={frequencyData} />
       <EmojiReactionsOverlay floatingReactions={floatingReactions} />
 
-      {/* ── Banners ────────────────────────────────────────────────────────── */}
+      {/* Banners */}
       {isReconnecting && (
         <div className="absolute top-0 inset-x-0 z-50 bg-amber-600/90 text-slate-950 px-4 py-2 text-xs font-extrabold text-center flex items-center justify-center gap-2 backdrop-blur-md">
           <div className="w-3 h-3 rounded-full border-2 border-slate-950 border-t-transparent animate-spin"/>
-          Connection lost — reconnecting…
+          Reconnecting…
         </div>
       )}
       {peerBanner && !isReconnecting && (
         <div className="absolute top-0 inset-x-0 z-50 bg-cyan-700/90 text-white px-4 py-2 text-xs font-bold text-center flex items-center justify-center gap-2 backdrop-blur-md">
-          <AlertCircle className="w-4 h-4 animate-pulse"/> {peerBanner} temporarily disconnected (60 s grace)…
+          <AlertCircle className="w-4 h-4 animate-pulse"/> {peerBanner} disconnected (60 s grace)…
         </div>
       )}
       {isRecording && (
@@ -493,90 +468,91 @@ export default function VideoRoom({
         </div>
       )}
 
-      {/* ── Main area ──────────────────────────────────────────────────────── */}
+      {/* Main */}
       <div className="flex-1 flex flex-col relative h-full overflow-hidden z-10">
 
         {/* Status bar */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-lg">
           <div className="flex items-center gap-2">
             <ChatBotOrb isProcessing={!isMuted}/>
-            <span className="text-xs font-bold text-white tracking-wide max-w-[100px] truncate">{roomCode}</span>
+            <span className="text-xs font-bold text-white max-w-[90px] truncate">{roomCode}</span>
           </div>
           <span className="text-slate-600">|</span>
           <div className="flex items-center gap-1.5 text-xs text-slate-300">
             <Users className="w-3.5 h-3.5 text-[#00E5C7]"/>
-            <span>{allParticipants.length} here</span>
+            <span>{allParticipants.length}</span>
           </div>
           <span className="text-slate-600">|</span>
-          <div className={`flex items-center gap-1.5 text-xs font-semibold ${st.cls}`}>
-            {st.icon}<span className="hidden sm:inline">{st.text}</span>
-          </div>
+          <span className={`text-xs font-semibold ${st.cls}`}>{st.text}</span>
           <span className="text-slate-600 hidden sm:inline">|</span>
           <AIStatusIndicator/>
         </div>
 
-        {/* Top right controls */}
+        {/* Top right */}
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
-          <button id="copy-link-btn" onClick={handleCopyLink} title="Copy invite link"
+          <button id="copy-link-btn" onClick={handleCopyLink}
             className="px-3 py-1.5 rounded-xl bg-[#0A0E1A]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1.5 transition-all">
             {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400"/> : <Copy className="w-3.5 h-3.5 text-cyan-400"/>}
             <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
           </button>
-          <button id="whatsapp-btn" onClick={handleWhatsAppShare} title="Share via WhatsApp"
+          <button id="wa-btn" onClick={handleWhatsApp}
             className="p-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 transition-all">
             <Share2 className="w-4 h-4"/>
           </button>
-          <button id="qr-btn" onClick={() => setShowQrModal(true)} title="QR Code"
+          <button id="qr-btn" onClick={() => setShowQrModal(true)}
             className="px-2.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition-all">QR</button>
           <div className="flex items-center gap-1 bg-[#0A0E1A]/80 backdrop-blur-md p-1 rounded-xl border border-white/10">
             {['gallery','speaker'].map(m => (
               <button key={m} onClick={() => setLayoutMode(m)}
                 className={`p-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all ${layoutMode===m ? 'bg-[#00E5C7] text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}>
-                {m === 'gallery' ? <LayoutGrid className="w-3.5 h-3.5"/> : <User className="w-3.5 h-3.5"/>} {m.charAt(0).toUpperCase()+m.slice(1)}
+                {m === 'gallery' ? <LayoutGrid className="w-3.5 h-3.5"/> : <User className="w-3.5 h-3.5"/>}
+                <span className="hidden sm:inline">{m.charAt(0).toUpperCase()+m.slice(1)}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* ── Video grid ─────────────────────────────────────────────────── */}
+        {/* Video grid */}
         <div className="flex-1 p-3 md:p-5 flex items-center justify-center overflow-hidden">
 
-          {/* Waiting state — only local, camera starting */}
-          {!localStream && (
+          {!localStream ? (
             <div className="flex flex-col items-center gap-4 text-slate-400">
               <div className="w-16 h-16 rounded-full border-2 border-[#00E5C7] border-t-transparent animate-spin"/>
               <p className="text-sm font-semibold">Starting camera…</p>
-              <p className="text-xs text-slate-600">Allow camera & microphone permissions</p>
+              <p className="text-xs text-slate-600">Please allow camera & microphone access</p>
             </div>
-          )}
-
-          {localStream && layoutMode === 'speaker' && Object.keys(remotePeers).length > 0 ? (
+          ) : layoutMode === 'speaker' && allParticipants.length > 1 ? (
             // Speaker layout
             <div className="w-full h-full max-w-6xl flex flex-col gap-3 items-center justify-center">
               {(() => {
                 const main = allParticipants.find(p => !p.isLocal) || allParticipants[0];
+                const strip = allParticipants.filter(p => p.id !== main.id);
                 return (
-                  <div className="relative w-full flex-1 max-h-[72vh] bg-[#0A0E1A]/95 rounded-2xl overflow-hidden border border-[#00E5C7]/40 shadow-2xl">
-                    <VideoTile p={main} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} large/>
-                  </div>
+                  <>
+                    <div className="relative w-full flex-1 max-h-[72vh] bg-[#0A0E1A]/95 rounded-2xl overflow-hidden border border-[#00E5C7]/40 shadow-2xl">
+                      <VideoTile p={main} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} large/>
+                    </div>
+                    <div className="w-full flex items-center justify-center gap-3 overflow-x-auto py-1">
+                      {strip.map(p => (
+                        <div key={p.id} className="relative w-36 h-24 flex-shrink-0 bg-[#0A0E1A]/90 rounded-xl overflow-hidden border border-white/10">
+                          <VideoTile p={p} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 );
               })()}
-              <div className="w-full flex items-center justify-center gap-3 overflow-x-auto py-1">
-                {allParticipants.filter((_, i) => i !== (allParticipants.findIndex(p => !p.isLocal) === -1 ? -1 : allParticipants.findIndex(p => !p.isLocal))).slice(0, 6).map(p => (
-                  <div key={p.id} className="relative w-36 h-24 bg-[#0A0E1A]/90 rounded-xl overflow-hidden border border-white/10 flex-shrink-0">
-                    <VideoTile p={p} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
-                  </div>
-                ))}
-              </div>
             </div>
-          ) : localStream ? (
+          ) : (
             // Gallery grid
             <div className={`w-full h-full grid gap-3 md:gap-4 items-center justify-center ${getGridClass(allParticipants.length)}`}>
               {allParticipants.map(p => (
-                <VideoTile key={p.id} p={p} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id}/>
+                <VideoTile key={p.id} p={p} isMuted={isMuted} volumeLevel={volumeLevel}
+                  translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker}
+                  selectedLanguage={selectedLanguage} socketId={socket.id}/>
               ))}
             </div>
-          ) : null}
+          )}
         </div>
 
         {/* Captions */}
@@ -584,50 +560,42 @@ export default function VideoRoom({
           <DualCaptionsOverlay currentCaption={currentCaption} targetLangCode={selectedLanguage} languages={languages} userSettings={userSettings}/>
         )}
 
-        {/* ── Bottom control bar ──────────────────────────────────────────── */}
-        <div className="h-20 bg-[#0A0E1A]/95 border-t border-white/10 px-3 sm:px-8 flex items-center justify-between z-30 shadow-2xl gap-2">
-
+        {/* Control bar */}
+        <div className="h-20 bg-[#0A0E1A]/95 border-t border-white/10 px-3 sm:px-8 flex items-center justify-between z-30 shadow-2xl">
           {/* Left */}
           <div className="flex items-center gap-2">
-            <CtrlBtn id="mute-btn" onClick={toggleMute} active={isMuted} activeColor="rose" title={isMuted ? 'Unmute' : 'Mute'}>
+            <CtrlBtn id="mute-btn" onClick={toggleMute} active={isMuted} color="rose" title={isMuted ? 'Unmute' : 'Mute'}>
               {isMuted ? <MicOff className="w-5 h-5"/> : <Mic className="w-5 h-5 text-[#00E5C7]"/>}
             </CtrlBtn>
-            <CtrlBtn id="video-btn" onClick={toggleVideo} active={!isVideoOn} activeColor="rose" title={isVideoOn ? 'Turn off camera' : 'Turn on camera'}>
+            <CtrlBtn id="video-btn" onClick={toggleVideo} active={!isVideoOn} color="rose" title="Toggle camera">
               {isVideoOn ? <VideoIcon className="w-5 h-5 text-[#00E5C7]"/> : <VideoOff className="w-5 h-5"/>}
             </CtrlBtn>
-            <CtrlBtn id="screen-btn" onClick={toggleScreenShare} active={isScreenSharing} activeColor="indigo" title="Share screen">
+            <CtrlBtn id="screen-btn" onClick={toggleScreenShare} active={isScreenSharing} color="indigo" title="Share screen">
               <Monitor className="w-5 h-5"/>
             </CtrlBtn>
-            <CtrlBtn id="record-btn" onClick={toggleRecording} active={isRecording} activeColor="red" title={isRecording ? 'Stop recording' : 'Record call'}>
-              <Disc className={`w-5 h-5 ${isRecording ? 'text-white' : 'text-rose-400'}`}/>
+            <CtrlBtn id="record-btn" onClick={toggleRecording} active={isRecording} color="red" title="Record">
+              <Disc className={`w-5 h-5 ${isRecording ? '' : 'text-rose-400'}`}/>
             </CtrlBtn>
           </div>
-
           {/* Center */}
           <div className="flex items-center gap-2">
             <button id="captions-btn" onClick={() => setShowCaptions(!showCaptions)}
               className={`px-3 py-2.5 rounded-2xl font-semibold text-xs flex items-center gap-1.5 transition-all border ${showCaptions ? 'bg-[#00E5C7]/20 text-[#00E5C7] border-[#00E5C7]/40' : 'bg-slate-800 text-slate-400 border-white/10 hover:text-white'}`}>
-              <Sparkles className="w-4 h-4 text-[#00E5C7]"/><span className="hidden sm:inline">Captions</span>
+              <Sparkles className="w-4 h-4"/><span className="hidden sm:inline">Captions</span>
             </button>
             <div className="hidden md:flex items-center gap-1 bg-slate-900 p-1.5 rounded-2xl border border-white/10">
-              {['👏','❤️','🎉','👍','💡'].map(e => (
-                <button key={e} onClick={() => triggerReaction(e)} className="hover:scale-125 transition-transform p-1 text-lg">{e}</button>
-              ))}
+              {['👏','❤️','🎉','👍','💡'].map(e => <button key={e} onClick={() => triggerReaction(e)} className="hover:scale-125 transition-transform p-1 text-lg">{e}</button>)}
             </div>
-            <button id="polls-btn" onClick={() => setIsPollsOpen(true)}
-              className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 transition-all" title="Polls">
+            <button id="polls-btn" onClick={() => setIsPollsOpen(true)} className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10" title="Polls">
               <BarChart2 className="w-5 h-5 text-indigo-400"/>
             </button>
           </div>
-
           {/* Right */}
           <div className="flex items-center gap-2">
-            <button id="host-btn" onClick={() => setIsHostControlsOpen(true)}
-              className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-[#00E5C7] border border-[#00E5C7]/30 transition-all" title="Host controls">
+            <button id="host-btn" onClick={() => setIsHostControlsOpen(true)} className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-[#00E5C7] border border-[#00E5C7]/30 transition-all" title="Host controls">
               <Shield className="w-5 h-5"/>
             </button>
-            <button id="chat-btn" onClick={() => setIsChatOpen(!isChatOpen)}
-              className={`p-3 rounded-2xl transition-all relative ${isChatOpen ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10'}`} title="Chat">
+            <button id="chat-btn" onClick={() => setIsChatOpen(!isChatOpen)} className={`p-3 rounded-2xl transition-all relative ${isChatOpen ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10'}`} title="Chat">
               <MessageSquare className="w-5 h-5"/>
               {chatMessages.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#00E5C7] text-slate-950 font-bold text-[9px] rounded-full flex items-center justify-center">{chatMessages.length > 9 ? '9+' : chatMessages.length}</span>}
             </button>
@@ -639,7 +607,7 @@ export default function VideoRoom({
         </div>
       </div>
 
-      {/* ── Panels & Modals ─────────────────────────────────────────────────── */}
+      {/* Panels */}
       <InCallChat isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} messages={chatMessages} onSendMessage={sendChat} selectedLanguage={selectedLanguage} languages={languages}/>
       <HostControlsModal isOpen={isHostControlsOpen} onClose={() => setIsHostControlsOpen(false)}
         participants={socketParticipants.filter(p => p.socketId !== socket.id).map(p => ({ socketId: p.socketId, name: p.name || 'Participant' }))}
@@ -657,7 +625,7 @@ export default function VideoRoom({
           <div className="bg-[#0A0E1A] border border-white/10 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl relative">
             <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white text-xl">✕</button>
             <h3 className="text-lg font-bold text-white">📱 Scan to Join</h3>
-            <p className="text-xs text-slate-400">Point your phone camera at this QR code to join the call instantly — no app needed.</p>
+            <p className="text-xs text-slate-400">No app needed — just scan and join instantly.</p>
             <div className="p-4 bg-white rounded-2xl inline-block">
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareableJoinUrl)}`} alt="QR" className="w-44 h-44 mx-auto"/>
             </div>
@@ -673,33 +641,49 @@ export default function VideoRoom({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CtrlBtn — bottom bar control button
+// CtrlBtn
 // ─────────────────────────────────────────────────────────────────────────────
-function CtrlBtn({ id, onClick, active, activeColor = 'rose', title, children }) {
-  const colorMap = { rose: 'bg-rose-500 shadow-rose-500/30', indigo: 'bg-indigo-600 shadow-indigo-500/30', red: 'bg-red-600 shadow-red-500/30 animate-pulse' };
+function CtrlBtn({ id, onClick, active, color = 'rose', title, children }) {
+  const colors = { rose: 'bg-rose-500 shadow-rose-500/30', indigo: 'bg-indigo-600 shadow-indigo-500/30', red: 'bg-red-600 shadow-red-500/30 animate-pulse' };
   return (
     <button id={id} onClick={onClick} title={title}
-      className={`p-3 rounded-2xl transition-all shadow-lg ${active ? `${colorMap[activeColor]} text-white` : 'bg-slate-800 hover:bg-slate-700 text-white border border-white/10'}`}>
+      className={`p-3 rounded-2xl transition-all shadow-lg ${active ? `${colors[color]} text-white` : 'bg-slate-800 hover:bg-slate-700 text-white border border-white/10'}`}>
       {children}
     </button>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VideoTile — renders one participant's video or avatar
+// VideoTile — renders one participant's video + audio
+//
+// CRITICAL FIX:
+//  • The <video> element is ALWAYS rendered in the DOM (never conditionally removed)
+//    This ensures WebRTC AUDIO plays even when video is off / stream has no video track
+//  • Video is shown/hidden via CSS (display: block / none)
+//  • useEffect depends on BOTH p.stream AND p.trackCount so it re-runs when the
+//    video track arrives after the audio track (they come in separate ontrack events)
+//  • We also listen to stream's 'addtrack' event for any late-arriving tracks
 // ─────────────────────────────────────────────────────────────────────────────
 function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false }) {
   const videoRef = useRef(null);
 
-  // Attach stream to <video> element whenever it changes
+  // Re-run when: stream changes, or trackCount changes (new track arrived)
   useEffect(() => {
     const el = videoRef.current;
     if (!el || !p.stream) return;
-    if (el.srcObject !== p.stream) {
+
+    // Always re-set srcObject so new tracks (video arriving after audio) take effect
+    el.srcObject = p.stream;
+    el.play().catch(() => {});
+
+    // Also listen for tracks added to the stream AFTER this effect runs
+    const onAddTrack = () => {
       el.srcObject = p.stream;
       el.play().catch(() => {});
-    }
-  }, [p.stream]);
+    };
+    p.stream.addEventListener('addtrack', onAddTrack);
+    return () => p.stream.removeEventListener('addtrack', onAddTrack);
+  }, [p.stream, p.trackCount]); // ← trackCount is the key to re-render on video track arrival
 
   const isTranslating = translatingSpeakers[p.id] || (p.isLocal && translatingSpeakers[socketId]);
   const isDubbing     = activeDubbingSpeaker === p.id;
@@ -709,22 +693,37 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
   if (isDubbing || isTranslating) ring = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.6)] animate-pulse';
   else if (isSpeaking)            ring = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.5)]';
 
-  const baseClass = compact ? 'w-full h-full' : large ? 'w-full h-full' : 'relative w-full min-h-[200px] max-h-[350px] md:min-h-[240px] md:max-h-[370px]';
+  const wrapClass = compact ? 'w-full h-full' : large ? 'w-full h-full' : 'relative w-full min-h-[200px] max-h-[360px] md:min-h-[240px] md:max-h-[380px]';
+
+  // Video is considered active if the stream has a live video track
+  const videoActive = p.hasVideo && p.isVideoActive !== false;
 
   return (
-    <div className={`${compact ? '' : baseClass} bg-[#0A0E1A]/90 backdrop-blur-md rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center group transition-all duration-300 ${ring}`}>
+    <div className={`${compact ? '' : wrapClass} bg-[#0A0E1A]/90 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center relative transition-all duration-300 ${ring}`}>
 
-      {/* Video — only shown when stream has video track */}
-      {p.isVideoActive && p.stream ? (
-        <video ref={videoRef} autoPlay playsInline muted={p.isLocal}
-          className={`w-full h-full object-cover ${p.isLocal ? '-scale-x-100' : ''}`}/>
-      ) : (
-        <div className="flex flex-col items-center gap-3 py-6 px-4">
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* VIDEO element ALWAYS in DOM — ensures audio plays even when hidden  */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={p.isLocal}   // only mute our OWN video (no echo)
+        style={{ display: videoActive && p.stream ? 'block' : 'none' }}
+        className={`w-full h-full object-cover ${p.isLocal ? '-scale-x-100' : ''}`}
+      />
+
+      {/* Avatar — shown when no video */}
+      {(!videoActive || !p.stream) && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <div className={`rounded-full bg-gradient-to-br from-indigo-900 to-slate-800 border border-indigo-500/30 flex items-center justify-center font-bold text-indigo-200
             ${compact ? 'w-10 h-10 text-base' : large ? 'w-28 h-28 text-5xl' : 'w-20 h-20 text-3xl'}`}>
             {(p.name || 'P').charAt(0).toUpperCase()}
           </div>
           {!compact && <span className={`font-bold text-white ${large ? 'text-lg' : 'text-sm'}`}>{p.name}{p.isLocal ? ' (You)' : ''}</span>}
+          {!compact && !p.isLocal && !p.stream && (
+            <span className="text-xs text-slate-500 animate-pulse">Connecting video…</span>
+          )}
         </div>
       )}
 
@@ -743,7 +742,6 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
           <span>{p.name || 'Participant'}{p.isLocal ? ' (You)' : ''}</span>
           <span className="text-[10px] bg-[#00E5C7]/20 text-[#00E5C7] px-1.5 py-0.5 rounded font-mono uppercase">{p.isLocal ? selectedLanguage : (p.spokenLanguage || 'en')}</span>
           {p.isLocal && isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400"/>}
-          {!p.isLocal && !p.audio && <MicOff className="w-3.5 h-3.5 text-rose-400"/>}
         </div>
       )}
     </div>
