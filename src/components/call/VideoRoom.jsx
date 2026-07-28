@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, PhoneOff,
   MessageSquare, Shield, BarChart2, Sparkles, Users, LayoutGrid, User,
-  Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera, Image as ImageIcon
+  Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera, Image as ImageIcon,
+  Coffee, Clock
 } from 'lucide-react';
 import DualCaptionsOverlay from './DualCaptionsOverlay';
 import HostControlsModal from './HostControlsModal';
@@ -632,15 +633,24 @@ export default function VideoRoom({
             </div>
           ) : allParticipants.length === 1 ? (
             <div className="w-full h-full flex flex-col items-center justify-center relative bg-[#05060B]">
-              <div className="w-[300px] h-[200px] mb-8">
-                {/* Fallback SVG if gstatic is unavailable */}
-                <svg viewBox="0 0 400 300" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full opacity-90">
-                  <circle cx="200" cy="150" r="100" fill="#1e293b" />
-                  <rect x="150" y="100" width="100" height="150" rx="20" fill="#0f172a" />
-                  <circle cx="200" cy="90" r="40" fill="#334155" />
-                  {/* We can use the actual SVG link which matches the screenshot */}
-                  <image href="https://www.gstatic.com/meet/user_edu_brb_sign_in_a68df45671d1844fa9fb683935ecfb62.svg" x="0" y="0" width="400" height="300" />
-                </svg>
+              <div className="w-[300px] h-[300px] mb-8 relative flex items-center justify-center">
+                {/* Background radar waves */}
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-500/10 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
+                <div className="absolute inset-8 rounded-full border-2 border-cyan-500/20 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]" style={{ animationDelay: '1s' }}></div>
+                <div className="absolute inset-16 rounded-full border-2 border-cyan-500/30 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]" style={{ animationDelay: '2s' }}></div>
+                
+                {/* Center avatar */}
+                <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-[#00E5C7]/50 flex items-center justify-center shadow-[0_0_30px_rgba(0,229,199,0.3)] z-10">
+                  <User className="w-12 h-12 text-[#00E5C7]" />
+                </div>
+                
+                {/* Floating elements to convey waiting/relaxing */}
+                <div className="absolute top-10 left-10 w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center animate-bounce" style={{ animationDuration: '3s' }}>
+                  <Coffee className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div className="absolute bottom-10 right-10 w-12 h-12 rounded-full bg-rose-500/20 flex items-center justify-center animate-bounce" style={{ animationDuration: '4s', animationDelay: '1s' }}>
+                  <Clock className="w-6 h-6 text-rose-400" />
+                </div>
               </div>
               <div className="flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-sm px-6 py-3 rounded-full border border-white/5">
                 <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
