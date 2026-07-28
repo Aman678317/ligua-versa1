@@ -830,11 +830,11 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
   if (isDubbing || isTranslating) ring = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.6)] animate-pulse';
   else if (isSpeaking)            ring = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.5)]';
 
-  const wrapClass = compact ? 'w-full h-full' : large ? 'w-full h-full' : 'relative w-full min-h-[200px] max-h-[360px] md:min-h-[240px] md:max-h-[380px]';
+  const wrapClass = compact ? 'absolute inset-0 w-full h-full' : large ? 'w-full h-full' : 'relative w-full min-h-[200px] max-h-[360px] md:min-h-[240px] md:max-h-[380px]';
   const videoActive = p.hasVideo && p.isVideoActive !== false;
 
   return (
-    <div className={`${compact ? '' : wrapClass} bg-[#0A0E1A]/90 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center relative transition-all duration-300 ${ring}`}>
+    <div className={`${wrapClass} bg-[#0A0E1A]/90 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center relative transition-all duration-300 ${ring}`}>
       {/* Video element ALWAYS in DOM so WebRTC audio plays */}
       <video
         ref={videoRef}
