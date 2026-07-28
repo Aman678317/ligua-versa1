@@ -5,7 +5,6 @@ import {
 } from 'lucide-react';
 import HoloEarth from '../canvas/HoloEarth';
 import NewMeetingDropdown from '../landing/NewMeetingDropdown';
-import LandingCarousel from '../landing/LandingCarousel';
 
 export default function DashboardLayout({ 
   currentUser, 
@@ -150,10 +149,6 @@ export default function DashboardLayout({
 
           </div>
 
-          {/* Right Column: Hero Graphic Preview */}
-          <div className="lg:col-span-5 flex justify-center lg:justify-end">
-            <LandingCarousel />
-          </div>
 
         </div>
 
