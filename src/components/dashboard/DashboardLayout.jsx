@@ -61,6 +61,7 @@ export default function DashboardLayout({
     }
   };
 
+  return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-[#00E5C7] selection:text-slate-950 relative">
       <div className="scanline-overlay"></div>
       
