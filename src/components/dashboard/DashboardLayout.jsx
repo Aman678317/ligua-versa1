@@ -4,7 +4,6 @@ import {
   Users, Clock, Play, FileText, ChevronRight, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import NewMeetingDropdown from '../landing/NewMeetingDropdown';
-import VantaGlobe from '../canvas/VantaGlobe';
 
 export default function DashboardLayout({ 
   currentUser, 
@@ -67,8 +66,6 @@ export default function DashboardLayout({
       
       {/* Google Meet-Style Clean Landing Hero */}
       <section className="relative w-full py-12 lg:py-20 px-4 sm:px-8 max-w-7xl mx-auto flex-1 flex flex-col justify-center animate-hudMount">
-        
-        <VantaGlobe />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
           

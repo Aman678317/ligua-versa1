@@ -9,8 +9,8 @@ const AnimatedBackground = () => {
     let attempts = 0;
     
     const initVanta = () => {
-      if (myRef.current && window.VANTA && window.VANTA.GLOBE) {
-        effect = window.VANTA.GLOBE({
+      if (myRef.current && window.VANTA && window.VANTA.NET) {
+        effect = window.VANTA.NET({
           el: myRef.current,
           mouseControls: true,
           touchControls: true,
@@ -19,10 +19,11 @@ const AnimatedBackground = () => {
           minWidth: 200.00,
           scale: 1.00,
           scaleMobile: 1.00,
-          color: 0x41369d,
-          color2: 0x5890b3,
-          size: 1.50,
-          backgroundColor: 0x251c39,
+          color: 0x00e5c7, // matches our cyan hud theme
+          backgroundColor: 0x05060b, // matches our dark bg
+          points: 15.00,
+          maxDistance: 20.00,
+          spacing: 15.00,
           THREE: window.THREE // Pass THREE explicitly just in case
         });
         setVantaEffect(effect);
