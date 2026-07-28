@@ -3,7 +3,7 @@ import {
   Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, PhoneOff,
   MessageSquare, Shield, BarChart2, Sparkles, Users, LayoutGrid, User,
   Copy, Check, Share2, AlertCircle, Disc, Wifi, Camera, Image as ImageIcon,
-  Coffee, Clock
+  Coffee, Clock, PictureInPicture
 } from 'lucide-react';
 import DualCaptionsOverlay from './DualCaptionsOverlay';
 import HostControlsModal from './HostControlsModal';
@@ -132,6 +132,12 @@ export default function VideoRoom({
     translatedText: 'リアルタイム翻訳が有効です！',
     timestamp: new Date().toISOString(), metrics: { totalLatencyMs: 590 }
   });
+
+  // ── Floating Captions (PiP) ────────────────────────────────────────────────
+  const pipVideoRef = useRef(null);
+  const pipCanvasRef = useRef(null);
+  const pipDrawFrameId = useRef(null);
+  const [isCaptionsPiPActive, setIsCaptionsPiPActive] = useState(false);
 
   const [isHost, setIsHost] = useState(false);
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
@@ -276,6 +282,82 @@ export default function VideoRoom({
   const handleRemoteStreamRemoved = useCallback((peerId) => {
     setRemotePeers(prev => { const n = { ...prev }; delete n[peerId]; return n; });
   }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Floating Captions (Picture-in-Picture) Loop
+  // ═══════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!isCaptionsPiPActive || !pipCanvasRef.current) return;
+    const canvas = pipCanvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    const drawCaptions = () => {
+      // Clear background (Dark theme)
+      ctx.fillStyle = '#0B0F19';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (currentCaption.translatedText || currentCaption.originalText) {
+        // Draw Speaker Name
+        ctx.fillStyle = '#94a3b8'; // slate-400
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(currentCaption.speakerName || 'Speaker', 30, 40);
+
+        // Draw Translated Text (Primary)
+        ctx.fillStyle = '#00E5C7'; // cyan
+        ctx.font = 'bold 36px sans-serif';
+        ctx.fillText(currentCaption.translatedText || '', 30, 90);
+
+        // Draw Original Text (Secondary)
+        ctx.fillStyle = '#cbd5e1'; // slate-300
+        ctx.font = 'italic 24px sans-serif';
+        ctx.fillText(currentCaption.originalText || '', 30, 140);
+      } else {
+        ctx.fillStyle = '#475569';
+        ctx.font = 'italic 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for speech...', canvas.width / 2, canvas.height / 2);
+      }
+
+      pipDrawFrameId.current = requestAnimationFrame(drawCaptions);
+    };
+
+    drawCaptions();
+
+    return () => {
+      if (pipDrawFrameId.current) cancelAnimationFrame(pipDrawFrameId.current);
+    };
+  }, [isCaptionsPiPActive, currentCaption]);
+
+  const toggleFloatingCaptions = async () => {
+    if (document.pictureInPictureElement === pipVideoRef.current) {
+      await document.exitPictureInPicture();
+      setIsCaptionsPiPActive(false);
+      return;
+    }
+
+    if (!pipCanvasRef.current) {
+      pipCanvasRef.current = document.createElement('canvas');
+      pipCanvasRef.current.width = 800;
+      pipCanvasRef.current.height = 200;
+    }
+    if (!pipVideoRef.current) {
+      pipVideoRef.current = document.createElement('video');
+      pipVideoRef.current.muted = true;
+      pipVideoRef.current.srcObject = pipCanvasRef.current.captureStream(30);
+      pipVideoRef.current.play().catch(() => {});
+    }
+
+    try {
+      await pipVideoRef.current.requestPictureInPicture();
+      setIsCaptionsPiPActive(true);
+      pipVideoRef.current.onleavepictureinpicture = () => {
+        setIsCaptionsPiPActive(false);
+      };
+    } catch (e) {
+      console.warn('Failed to start PiP for captions:', e);
+    }
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // STEP 2 — Join room + init WebRTC ONLY after local stream is ready
@@ -726,6 +808,11 @@ export default function VideoRoom({
             <button id="captions-btn" onClick={() => setShowCaptions(!showCaptions)}
               className={`px-3 py-2.5 rounded-2xl font-semibold text-xs flex items-center gap-1.5 transition-all border ${showCaptions ? 'bg-[#00E5C7]/20 text-[#00E5C7] border-[#00E5C7]/40' : 'bg-slate-800 text-slate-400 border-white/10 hover:text-white'}`}>
               <Sparkles className="w-4 h-4"/><span className="hidden sm:inline">Captions</span>
+            </button>
+            <button onClick={toggleFloatingCaptions}
+              className={`px-3 py-2.5 rounded-2xl font-semibold text-xs flex items-center gap-1.5 transition-all border ${isCaptionsPiPActive ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-slate-800 text-slate-400 border-white/10 hover:text-white'}`}
+              title="Pop-out Captions (Floating window)">
+              <PictureInPicture className="w-4 h-4"/><span className="hidden sm:inline">Pop-out</span>
             </button>
             <div className="hidden md:flex items-center gap-1 bg-slate-900 p-1.5 rounded-2xl border border-white/10">
               {['👏','❤️','🎉','👍','💡'].map(e => <button key={e} onClick={() => triggerReaction(e)} className="hover:scale-125 transition-transform p-1 text-lg">{e}</button>)}
