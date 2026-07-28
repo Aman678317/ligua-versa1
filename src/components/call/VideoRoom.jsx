@@ -568,6 +568,28 @@ export default function VideoRoom({
               <p className="text-sm font-semibold">Starting camera…</p>
               <p className="text-xs text-slate-600">Please allow camera & microphone access</p>
             </div>
+          ) : allParticipants.length === 1 ? (
+            <div className="w-full h-full flex flex-col items-center justify-center relative bg-[#05060B]">
+              <div className="w-[300px] h-[200px] mb-8">
+                {/* Fallback SVG if gstatic is unavailable */}
+                <svg viewBox="0 0 400 300" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full opacity-90">
+                  <circle cx="200" cy="150" r="100" fill="#1e293b" />
+                  <rect x="150" y="100" width="100" height="150" rx="20" fill="#0f172a" />
+                  <circle cx="200" cy="90" r="40" fill="#334155" />
+                  {/* We can use the actual SVG link which matches the screenshot */}
+                  <image href="https://www.gstatic.com/meet/user_edu_brb_sign_in_a68df45671d1844fa9fb683935ecfb62.svg" x="0" y="0" width="400" height="300" />
+                </svg>
+              </div>
+              <div className="flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-sm px-6 py-3 rounded-full border border-white/5">
+                <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-lg md:text-xl font-medium text-slate-200">Please wait until a meeting host brings you into the call</p>
+              </div>
+
+              {/* Mini Self-View like Google Meet */}
+              <div className="absolute bottom-4 right-4 w-56 h-36 md:w-72 md:h-48 bg-[#0A0E1A] rounded-xl overflow-hidden border border-white/10 shadow-2xl">
+                <VideoTile p={allParticipants[0]} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
+              </div>
+            </div>
           ) : layoutMode === 'speaker' && allParticipants.length > 1 ? (
             // Speaker layout
             <div className="w-full h-full max-w-6xl flex flex-col gap-3 items-center justify-center">
