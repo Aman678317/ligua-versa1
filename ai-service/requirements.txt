@@ -7,3 +7,6 @@ edge-tts>=6.1.9
 faster-whisper>=1.0.0
 requests>=2.31.0
 numpy>=1.26.0
+onnxruntime>=1.17.0
+websockets>=12.0
+TTS>=0.22.0

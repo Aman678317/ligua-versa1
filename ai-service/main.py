@@ -5,7 +5,7 @@ Real-time VAD -> Whisper STT -> NMT -> Piper TTS (with edge-tts fallback) pipeli
 
 import time
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -13,6 +13,7 @@ from typing import Optional, List
 from tts_engines import TTSEngineManager
 from whisper_stream import WhisperStreamEngine
 from vad import VoiceActivityDetector
+from context_mt import ContextAwareMTEngine, TranslationQAAgent
 
 try:
     from deep_translator import GoogleTranslator
@@ -34,6 +35,8 @@ app.add_middleware(
 tts_manager = TTSEngineManager()
 whisper_engine = WhisperStreamEngine()
 vad_detector = VoiceActivityDetector()
+mt_engine = ContextAwareMTEngine()
+qa_agent = TranslationQAAgent()
 
 class TranslationRequest(BaseModel):
     speaker_id: str
@@ -140,3 +143,93 @@ def translate_speech(req: TranslationRequest):
         )
     )
 
+import asyncio
+
+@app.websocket("/stream")
+async def websocket_stream(websocket: WebSocket):
+    await websocket.accept()
+    audio_buffer = bytearray()
+    speaker_id = "unknown"
+    source_lang = "en"
+    target_lang = "es"
+    tone = "casual"
+    session_context = []
+    glossary = {}
+    
+    last_partial_time = time.time()
+    
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            # If it's a JSON config message, parse it
+            if len(data) > 0 and data[0] == 123:
+                import json
+                try:
+                    config = json.loads(data.decode('utf-8'))
+                    speaker_id = config.get("speaker_id", speaker_id)
+                    source_lang = config.get("source_lang", source_lang)
+                    target_lang = config.get("target_lang", target_lang)
+                    tone = config.get("tone", tone)
+                    glossary.update(config.get("glossary", {}))
+                except:
+                    pass
+                continue
+
+            audio_buffer.extend(data)
+            is_active = vad_detector.process_chunk(data)
+            
+            now = time.time()
+            if is_active and (now - last_partial_time > 0.3) and len(audio_buffer) > 16000 * 0.5:
+                transcribed = whisper_engine.transcribe_audio_chunk(bytes(audio_buffer), speaker_id=speaker_id, force_language=source_lang)
+                if transcribed and transcribed.get("text"):
+                    await websocket.send_json({
+                        "type": "partial",
+                        "speaker_id": speaker_id,
+                        "text": transcribed["text"]
+                    })
+                last_partial_time = now
+
+            elif not is_active and len(audio_buffer) > 16000 * 0.5:
+                transcribed = whisper_engine.transcribe_audio_chunk(bytes(audio_buffer), speaker_id=speaker_id, force_language=source_lang)
+                if transcribed and transcribed.get("text"):
+                    text = transcribed["text"]
+                    
+                    # Context-Aware MT
+                    translated = mt_engine.translate_with_context(
+                        text=text, 
+                        source_lang=source_lang, 
+                        target_lang=target_lang,
+                        session_context=session_context,
+                        glossary=glossary,
+                        tone=tone
+                    )
+                    
+                    # Update Context Window
+                    session_context.append({"source": text, "translation": translated})
+                    if len(session_context) > 3:
+                        session_context.pop(0)
+
+                    # QA Agent parallel score (simulated)
+                    qa_score = qa_agent.score_translation(text, translated, source_lang, target_lang)
+                    qa_flagged = qa_score < 0.6
+                    
+                    # TTS
+                    tts_res = tts_manager.synthesize_speech(translated, target_lang)
+                    
+                    await websocket.send_json({
+                        "type": "final",
+                        "speaker_id": speaker_id,
+                        "original_text": text,
+                        "translated_text": translated,
+                        "qa_confidence": qa_score,
+                        "qa_flagged": qa_flagged,
+                        "audio_base64": tts_res.get("audio_base64", ""),
+                        "detected_language": transcribed.get("language", source_lang)
+                    })
+                
+                audio_buffer.clear()
+
+    except WebSocketDisconnect:
+        logging.info("WebSocket disconnected")
+    except Exception as e:
+        logging.error(f"WebSocket error: {e}")

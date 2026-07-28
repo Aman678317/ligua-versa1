@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model GlossaryTerm {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_type          String   // 'user' or 'org'
+  owner_id            String   @db.Uuid
+  source_term         String
+  target_lang         String
+  preferred_translation String
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@unique([owner_type, owner_id, source_term, target_lang])
+  @@index([owner_type, owner_id])
+}
+
+model CallSession {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  started_at            DateTime @default(now())
+  ended_at              DateTime?
+  participant_a_id      String   @db.Uuid
+  participant_b_id      String   @db.Uuid
+  tone_setting          String   @default("casual")
+  voice_cloning_enabled Boolean  @default(true)
+  status                String   @default("active")
+
+  utterances            CallUtterance[]
+  summaries             CallSummary[]
+  consentLogs           VoiceConsentLog[]
+}
+
+model CallUtterance {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  call_session_id   String   @db.Uuid
+  speaker_id        String   @db.Uuid
+  source_lang       String
+  target_lang       String
+  source_text       String
+  translated_text   String
+  qa_confidence     Float?
+  qa_flagged        Boolean  @default(false)
+  timestamp         DateTime @default(now())
+
+  session           CallSession @relation(fields: [call_session_id], references: [id], onDelete: Cascade)
+
+  @@index([call_session_id])
+}
+
+model CallSummary {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  call_session_id     String   @db.Uuid
+  summary_text_a_lang String
+  summary_text_b_lang String
+  action_items        Json     @default("[]")
+  sentiment_tag       String?
+  generated_at        DateTime @default(now())
+
+  session             CallSession @relation(fields: [call_session_id], references: [id], onDelete: Cascade)
+}
+
+model VoiceConsentLog {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String   @db.Uuid
+  call_session_id   String   @db.Uuid
+  consented         Boolean
+  recorded_at       DateTime @default(now())
+
+  session           CallSession @relation(fields: [call_session_id], references: [id], onDelete: Cascade)
+}

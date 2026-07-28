@@ -61,7 +61,13 @@ export default function DualCaptionsOverlay({ currentCaption, targetLangCode, la
             <div className={`${captionFontSizeClass} font-bold text-white flex items-center justify-between gap-3 bg-gradient-to-r from-[#00E5C7]/15 via-[#5B8CFF]/15 to-transparent p-3 rounded-xl border border-[#00E5C7]/30 shadow-inner`}>
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-[#00E5C7] shrink-0 animate-spin-slow" />
-                <p className="tracking-wide">{currentCaption.translatedText}</p>
+                <p className="tracking-wide">
+                  {currentCaption.translatedText}
+                  {currentCaption.qaFlagged && (
+                    <span title="Low confidence translation" className="inline-block ml-2 w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
+                  )}
+                </p>
+                <button className="ml-2 text-[10px] text-cyan-300 hover:text-cyan-100 underline decoration-cyan-500/50" onClick={() => console.log('Fix translation modal triggered')}>Fix</button>
               </div>
 
               {/* Audio synth wave indicator */}
