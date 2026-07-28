@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
-import { createDailyRoom, getDailyRoom, startDailyRecording, stopDailyRecording } from './dailyService.js';
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -72,55 +71,14 @@ function getRoom(meetingCode) {
 }
 
 
-// Daily.co Cloud Recording Endpoints
-app.post('/api/recording/start', async (req, res) => {
-  const { roomName } = req.body;
-  const result = await startDailyRecording(roomName);
-  res.json(result);
-});
-
-app.post('/api/recording/stop', async (req, res) => {
-  const { recordingId } = req.body;
-  const result = await stopDailyRecording(recordingId);
-  res.json(result);
-});
-
-
 // Root Endpoint
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
     service: 'LinguaVersa Realtime Backend Server',
     version: '1.2.0',
-    endpoints: ['/api/languages', '/api/meetings', '/api/calls', '/api/summaries', '/api/analytics', '/api/contacts', '/api/daily/room']
+    endpoints: ['/api/languages', '/api/meetings', '/api/calls', '/api/summaries', '/api/analytics', '/api/contacts']
   });
-});
-
-// Daily.co Managed Room Endpoint
-app.post('/api/daily/room', async (req, res) => {
-  const { roomCode } = req.body;
-
-  // 1. Check if we already have it in callSessions
-  const session = callSessions.get(roomCode);
-  if (session && session.dailyRoomUrl) {
-    return res.json({ success: true, url: session.dailyRoomUrl, name: session.code });
-  }
-
-  // 2. Check mockMeetings
-  const meeting = mockMeetings.find(m => m.code === roomCode);
-  if (meeting && meeting.dailyRoomUrl) {
-    return res.json({ success: true, url: meeting.dailyRoomUrl, name: meeting.code });
-  }
-
-  // 3. Check Daily.co if room exists
-  const existingRoom = await getDailyRoom(roomCode);
-  if (existingRoom.success) {
-    return res.json(existingRoom);
-  }
-
-  // 4. Create new room
-  const roomData = await createDailyRoom(roomCode);
-  res.json(roomData);
 });
 
 // REST API Endpoints
@@ -133,13 +91,10 @@ app.post('/api/calls', async (req, res) => {
   const { hostId, title } = req.body;
   const sessionId = `call-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h expiry
-  
-  const dailyRoom = await createDailyRoom(sessionId);
 
   const session = {
     sessionId,
     code: sessionId,
-    dailyRoomUrl: dailyRoom.url,
     title: title || 'Instant Translated Video Call',
     status: 'WAITING', // WAITING, ACTIVE, ENDED
     hostId: hostId || null,
@@ -235,12 +190,10 @@ app.get('/api/meetings', (req, res) => {
 app.post('/api/meetings', async (req, res) => {
   const { hostId, title, description, scheduledStart, settings } = req.body;
   const meetingCode = `lingua-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
-  const dailyRoom = await createDailyRoom(meetingCode);
 
   const newMeeting = {
     id: `meeting-${Date.now()}`,
     code: meetingCode,
-    dailyRoomUrl: dailyRoom.url,
     title: title || 'Instant Video Call',
     description: description || 'Live translated session',
     status: 'LIVE',
@@ -265,7 +218,6 @@ app.get('/api/meetings/:code', async (req, res) => {
   let meeting = mockMeetings.find(m => m.code === code);
   
   if (!meeting) {
-    // Check callSessions Map first
     const session = callSessions.get(code);
     if (session) {
       return res.json({
@@ -273,7 +225,6 @@ app.get('/api/meetings/:code', async (req, res) => {
         meeting: {
           id: session.sessionId,
           code: session.code,
-          dailyRoomUrl: session.dailyRoomUrl,
           title: session.title,
           status: session.status,
           hostId: session.hostId
@@ -281,16 +232,9 @@ app.get('/api/meetings/:code', async (req, res) => {
       });
     }
 
-    // Attempt to get existing room, fallback to create
-    let dailyRoom = await getDailyRoom(code);
-    if (!dailyRoom.success) {
-      dailyRoom = await createDailyRoom(code);
-    }
-
     meeting = {
       id: `meeting-dynamic-${code}`,
       code: code,
-      dailyRoomUrl: dailyRoom.url,
       title: `Call (${code})`,
       status: 'LIVE',
       hostId: req.query.hostId || null,

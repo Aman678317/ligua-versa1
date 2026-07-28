@@ -1,24 +1,22 @@
 import React, { useState } from 'react';
 import { BarChart3, Plus, CheckCircle2, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-
 export function EmojiReactionsOverlay({ floatingReactions }) {
   return (
     <div className="absolute inset-0 pointer-events-none z-40 overflow-hidden">
-      <AnimatePresence>
-        {floatingReactions.map((r) => (
-          <motion.div
-            key={r.id}
-            initial={{ opacity: 1, y: '80%', x: `${r.x}%`, scale: 0.8 }}
-            animate={{ opacity: 0, y: '10%', scale: 1.5, rotate: r.rotate }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 2.2, ease: 'easeOut' }}
-            className="absolute text-4xl shadow-2xl drop-shadow-[0_10px_10px_rgba(0,0,0,0.8)]"
-          >
+      {floatingReactions.map((r) => (
+        <div
+          key={r.id}
+          style={{ 
+            left: `${r.x}%`,
+            animation: 'floatUp 2.2s ease-out forwards',
+          }}
+          className="absolute bottom-10 text-4xl shadow-2xl drop-shadow-[0_10px_10px_rgba(0,0,0,0.8)]"
+        >
+          <div style={{ transform: `rotate(${r.rotate}deg)` }}>
             {r.emoji}
-          </motion.div>
-        ))}
-      </AnimatePresence>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

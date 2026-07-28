@@ -1,7 +1,5 @@
 import React from 'react';
 import { Sparkles, Zap, Volume2, Globe } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-
 export default function DualCaptionsOverlay({ currentCaption, targetLangCode, languages, userSettings }) {
   if (!currentCaption) return null;
 
@@ -18,15 +16,10 @@ export default function DualCaptionsOverlay({ currentCaption, targetLangCode, la
 
   return (
     <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 w-11/12 max-w-3xl pointer-events-none">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentCaption.id || currentCaption.timestamp}
-          initial={{ opacity: 0, y: 15, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -10, scale: 0.98 }}
-          transition={{ duration: 0.25, ease: 'easeOut' }}
-          className="relative glass-hud bg-[#0A0E1A]/90 backdrop-blur-2xl border border-[#00E5C7]/30 rounded-2xl p-4 shadow-2xl shadow-cyan-950/50 pointer-events-auto"
-        >
+      <div
+        key={currentCaption.id || currentCaption.timestamp}
+        className="relative glass-hud bg-[#0A0E1A]/90 backdrop-blur-2xl border border-[#00E5C7]/30 rounded-2xl p-4 shadow-2xl shadow-cyan-950/50 pointer-events-auto animate-in slide-in-from-bottom-4 fade-in duration-300"
+      >
           {/* Header Row */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2">
             
@@ -83,9 +76,7 @@ export default function DualCaptionsOverlay({ currentCaption, targetLangCode, la
               </div>
             </div>
           </div>
-
-        </motion.div>
-      </AnimatePresence>
+      </div>
     </div>
   );
 }
