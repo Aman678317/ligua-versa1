@@ -773,7 +773,11 @@ export default function VideoRoom({
       {/* Panels */}
       <InCallChat isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} messages={chatMessages} onSendMessage={sendChat} selectedLanguage={selectedLanguage} languages={languages}/>
       <RoomActivities isOpen={isActivitiesOpen} onClose={() => setIsActivitiesOpen(false)} socket={socket} roomCode={roomCode} currentUser={currentUser} />
-      <HostControlsModal isOpen={isHostControlsOpen} onClose={() => setIsHostControlsOpen(false)}
+      <HostControlsModal 
+        isOpen={isHostControlsOpen} 
+        onClose={() => setIsHostControlsOpen(false)}
+        voiceCloningEnabled={voiceCloningEnabled}
+        onToggleVoiceCloning={() => setVoiceCloningEnabled(!voiceCloningEnabled)}
         participants={socketParticipants.filter(p => p.socketId !== socket.id).map(p => ({ socketId: p.socketId, name: p.name || 'Participant' }))}
         waitingRoomList={waitingRoomList} roomSettings={roomSettings}
         onUpdateSettings={(s) => { setRoomSettings(p => ({ ...p, ...s })); socket.emit('update-room-settings', s); }}

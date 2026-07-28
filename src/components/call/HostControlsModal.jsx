@@ -10,7 +10,9 @@ export default function HostControlsModal({
   onUpdateSettings,
   onMuteAll,
   onAdmitParticipant,
-  onRemoveParticipant
+  onRemoveParticipant,
+  voiceCloningEnabled,
+  onToggleVoiceCloning
 }) {
   if (!isOpen) return null;
 
@@ -73,6 +75,24 @@ export default function HostControlsModal({
                   <div>
                     <p className="text-sm font-semibold">Waiting Room</p>
                     <p className="text-[11px] opacity-70">Host approval required to enter</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Voice Cloning Toggle */}
+              <div 
+                onClick={onToggleVoiceCloning}
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                  voiceCloningEnabled
+                    ? 'bg-[#00E5C7]/10 border-[#00E5C7]/30 text-[#00E5C7]'
+                    : 'bg-slate-900/60 border-white/10 hover:border-slate-600 text-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <UserCheck className={`w-5 h-5 ${voiceCloningEnabled ? 'text-[#00E5C7]' : 'text-slate-400'}`} />
+                  <div>
+                    <p className="text-sm font-semibold">Voice Cloning</p>
+                    <p className="text-[11px] opacity-70">Use cloned voice for translation</p>
                   </div>
                 </div>
               </div>
