@@ -10,6 +10,7 @@ import AuthModal from './components/auth/AuthModal';
 import ScheduleMeetingModal from './components/modals/ScheduleMeetingModal';
 import MeetingCreatedModal from './components/modals/MeetingCreatedModal';
 import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './mockData';
+import AnimatedBackground from './components/AnimatedBackground';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'prejoin' | 'call' | 'summary' | 'analytics' | 'settings'
@@ -199,7 +200,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-transparent text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative z-0">
+      <AnimatedBackground />
       
       {/* Top Navbar */}
       <Navbar

@@ -35,6 +35,10 @@ export default {
       animation: {
         'pulse-glow': 'pulseGlow 2s infinite ease-in-out',
         'wave': 'wave 1.2s infinite ease-in-out',
+        'morph': 'morph 8s ease-in-out infinite',
+        'morph-reverse': 'morphReverse 10s ease-in-out infinite',
+        'blob': 'blob 10s infinite',
+        'pulse-slow': 'pulseSlow 6s infinite',
       },
       keyframes: {
         pulseGlow: {
@@ -44,6 +48,25 @@ export default {
         wave: {
           '0%, 100%': { height: '6px' },
           '50%': { height: '24px' },
+        },
+        morph: {
+          '0%': { borderRadius: '60% 40% 30% 70% / 60% 30% 70% 40%', transform: 'rotate(0deg)' },
+          '50%': { borderRadius: '30% 60% 70% 40% / 50% 60% 30% 60%', transform: 'rotate(180deg)' },
+          '100%': { borderRadius: '60% 40% 30% 70% / 60% 30% 70% 40%', transform: 'rotate(360deg)' },
+        },
+        morphReverse: {
+          '0%': { borderRadius: '40% 60% 70% 30% / 40% 70% 30% 60%', transform: 'rotate(360deg)' },
+          '50%': { borderRadius: '70% 30% 40% 60% / 30% 40% 60% 70%', transform: 'rotate(180deg)' },
+          '100%': { borderRadius: '40% 60% 70% 30% / 40% 70% 30% 60%', transform: 'rotate(0deg)' },
+        },
+        blob: {
+          '0%, 100%': { transform: 'translate(0px, 0px) scale(1)' },
+          '33%': { transform: 'translate(30px, -50px) scale(1.1)' },
+          '66%': { transform: 'translate(-20px, 20px) scale(0.9)' },
+        },
+        pulseSlow: {
+          '0%, 100%': { opacity: '0.4', transform: 'scale(1)' },
+          '50%': { opacity: '0.8', transform: 'scale(1.05)' },
         }
       }
     },
