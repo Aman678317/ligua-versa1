@@ -13,54 +13,12 @@ import { EmojiReactionsOverlay, PollsModal } from './PollsAndReactions';
 import VoiceConsentModal from '../modals/VoiceConsentModal';
 
 import AIStatusIndicator from './AIStatusIndicator';
-import { AudioMixer } from '../../utils/AudioMixer';
 import { CaptionSynchronizer } from '../../utils/CaptionSynchronizer';
 import { SpeechTranslationService } from '../../services/speechTranslation';
 import { WebRTCManager } from '../../services/webrtc';
 import { getSocket } from '../../services/socket';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Synthetic Stream Fallback (for insecure HTTP mobile contexts or blocked permissions)
-// ─────────────────────────────────────────────────────────────────────────────
-function createDummyStream() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 480;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#0F172A';
-  ctx.fillRect(0, 0, 640, 480);
-  ctx.fillStyle = '#38BDF8';
-  ctx.font = 'bold 24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Camera Offline / Blocked', 320, 240);
-
-  let videoTrack = null;
-  try {
-    if (canvas.captureStream) {
-      videoTrack = canvas.captureStream(10).getVideoTracks()[0];
-    }
-  } catch (e) {
-    console.warn('[VideoRoom] canvas.captureStream not supported:', e);
-  }
-
-  let audioTrack = null;
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const dst = audioCtx.createMediaStreamDestination();
-    osc.connect(dst);
-    osc.start();
-    audioTrack = dst.stream.getAudioTracks()[0];
-    if (audioTrack) audioTrack.enabled = false;
-  } catch (e) {
-    console.warn('[VideoRoom] AudioContext fallback failed:', e);
-  }
-
-  const tracks = [];
-  if (videoTrack) tracks.push(videoTrack);
-  if (audioTrack) tracks.push(audioTrack);
-  return new MediaStream(tracks);
-}
+// Removed synthetic stream fallback to reduce bloat
 
 export default function VideoRoom({
   roomCode, currentUser, selectedLanguage, setSelectedLanguage,
@@ -73,10 +31,8 @@ export default function VideoRoom({
   const [isMuted, setIsMuted]             = useState(false);
   const [isVideoOn, setIsVideoOn]         = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [isBlurActive, setIsBlurActive]   = useState(userSettings?.initialBlur || false);
   const localStreamRef                    = useRef(null);
   const processedStreamRef                = useRef(null);
-  const animFrameId                       = useRef(null);
 
   // ── Remote peers ───────────────────────────────────────────────────────────
   const [remotePeers, setRemotePeers]     = useState({});
@@ -101,12 +57,7 @@ export default function VideoRoom({
   const [isReconnecting, setIsReconnecting]     = useState(false);
   const [peerBanner, setPeerBanner]             = useState(null);
 
-  // ── Audio visualiser ───────────────────────────────────────────────────────
-  const [volumeLevel, setVolumeLevel]     = useState(0);
-  const [frequencyData, setFrequencyData] = useState([]);
-  const audioMixerRef                     = useRef(null);
-
-  // ── Chat / Polls / Reactions ───────────────────────────────────────────────
+  // ── Connection status ──────────────────────────────────────────────────────
   const [chatMessages, setChatMessages]   = useState([]);
   const [polls, setPolls]                 = useState([]);
   const [floatingReactions, setFloatingReactions] = useState([]);
@@ -159,26 +110,15 @@ export default function VideoRoom({
         console.warn('[VideoRoom] Camera capture warning:', err);
       }
 
-      // If camera/mic capture returned null or threw, generate synthetic stream so call ALWAYS connects
       if (!captured) {
-        console.warn('[VideoRoom] Using dummy stream fallback for connection');
-        captured = createDummyStream();
+        console.warn('[VideoRoom] Camera capture failed. Ensure permissions are granted.');
+      } else {
+        if (!mounted) return;
+        localStreamRef.current = captured;
+        setLocalStream(captured);
+        console.log('[VideoRoom] ✅ Local stream initialized:',
+          captured.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
       }
-
-      if (!mounted) return;
-      localStreamRef.current = captured;
-      setLocalStream(captured);
-
-      try {
-        const mixer = new AudioMixer();
-        audioMixerRef.current = mixer;
-        mixer.initialize(captured);
-      } catch (e) {
-        console.warn('[VideoRoom] AudioMixer init failed:', e);
-      }
-
-      console.log('[VideoRoom] ✅ Local stream initialized:',
-        captured.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
     };
 
     capture();
@@ -189,73 +129,7 @@ export default function VideoRoom({
     };
   }, []);
 
-  // Audio spectrum loop
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (audioMixerRef.current) {
-        setVolumeLevel(audioMixerRef.current.getVolumeLevel());
-        setFrequencyData(audioMixerRef.current.getFrequencySpectrum());
-      }
-    }, 100);
-    return () => clearInterval(id);
-  }, []);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Virtual Background (Blur) Effect
-  // ═══════════════════════════════════════════════════════════════════════════
-  useEffect(() => {
-    if (!localStreamRef.current) return;
-    
-    if (!isBlurActive) {
-      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
-      if (processedStreamRef.current) {
-        processedStreamRef.current.getTracks().forEach(t => t.stop());
-        processedStreamRef.current = null;
-      }
-      setLocalStream(localStreamRef.current);
-      if (webrtcManagerRef.current && hasJoinedRef.current) {
-        webrtcManagerRef.current.updateLocalStream(localStreamRef.current);
-      }
-      return;
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    
-    const video = document.createElement('video');
-    video.muted = true;
-    video.srcObject = localStreamRef.current;
-    video.play().catch(() => {});
-
-    const draw = () => {
-      if (ctx && video.readyState >= 2) {
-         ctx.filter = 'blur(10px)';
-         ctx.drawImage(video, 0, 0, 640, 480);
-      }
-      animFrameId.current = requestAnimationFrame(draw);
-    };
-    draw();
-
-    const processedStream = canvas.captureStream(30);
-    const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (audioTrack) {
-      processedStream.addTrack(audioTrack);
-    }
-    
-    processedStreamRef.current = processedStream;
-    setLocalStream(processedStream);
-    
-    if (webrtcManagerRef.current && hasJoinedRef.current) {
-      webrtcManagerRef.current.updateLocalStream(processedStream);
-    }
-    
-    return () => {
-      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
-      video.srcObject = null;
-    };
-  }, [isBlurActive, localStreamRef.current]);
+  // Removed Virtual Background and Audio Spectrum loops to prevent lag
 
   // ═══════════════════════════════════════════════════════════════════════════
   // WebRTC callbacks
@@ -664,21 +538,16 @@ export default function VideoRoom({
           ) : allParticipants.length === 1 ? (
             <div className="w-full h-full flex flex-col items-center justify-center relative bg-[#05060B]">
               <div className="w-[300px] h-[300px] mb-8 relative flex items-center justify-center">
-                {/* Background radar waves */}
-                <div className="absolute inset-0 rounded-full border-2 border-cyan-500/10 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
-                <div className="absolute inset-8 rounded-full border-2 border-cyan-500/20 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]" style={{ animationDelay: '1s' }}></div>
-                <div className="absolute inset-16 rounded-full border-2 border-cyan-500/30 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]" style={{ animationDelay: '2s' }}></div>
-                
                 {/* Center avatar */}
-                <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-[#00E5C7]/50 flex items-center justify-center shadow-[0_0_30px_rgba(0,229,199,0.3)] z-10">
+                <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-[#00E5C7]/50 flex items-center justify-center z-10">
                   <User className="w-12 h-12 text-[#00E5C7]" />
                 </div>
                 
                 {/* Floating elements to convey waiting/relaxing */}
-                <div className="absolute top-10 left-10 w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center animate-bounce" style={{ animationDuration: '3s' }}>
+                <div className="absolute top-10 left-10 w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center">
                   <Coffee className="w-5 h-5 text-indigo-400" />
                 </div>
-                <div className="absolute bottom-10 right-10 w-12 h-12 rounded-full bg-rose-500/20 flex items-center justify-center animate-bounce" style={{ animationDuration: '4s', animationDelay: '1s' }}>
+                <div className="absolute bottom-10 right-10 w-12 h-12 rounded-full bg-rose-500/20 flex items-center justify-center">
                   <Clock className="w-6 h-6 text-rose-400" />
                 </div>
               </div>
@@ -694,7 +563,7 @@ export default function VideoRoom({
 
               {/* Mini Self-View like Google Meet */}
               <div className="absolute bottom-4 right-4 w-56 h-36 md:w-72 md:h-48 bg-[#0A0E1A] rounded-xl overflow-hidden border border-white/10 shadow-2xl">
-                <VideoTile p={allParticipants[0]} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
+                <VideoTile p={allParticipants[0]} isMuted={isMuted} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
               </div>
             </div>
           ) : layoutMode === 'speaker' && allParticipants.length > 1 ? (
@@ -706,12 +575,12 @@ export default function VideoRoom({
                 return (
                   <>
                     <div className="relative w-full flex-1 max-h-[72vh] bg-[#0A0E1A]/95 rounded-2xl overflow-hidden border border-[#00E5C7]/40 shadow-2xl">
-                      <VideoTile p={main} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} large/>
+                      <VideoTile p={main} isMuted={isMuted} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} large/>
                     </div>
                     <div className="w-full flex items-center justify-center gap-3 overflow-x-auto py-1">
                       {strip.map(p => (
                         <div key={p.id} className="relative w-36 h-24 flex-shrink-0 bg-[#0A0E1A]/90 rounded-xl overflow-hidden border border-white/10">
-                          <VideoTile p={p} isMuted={isMuted} volumeLevel={volumeLevel} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
+                          <VideoTile p={p} isMuted={isMuted} translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker} selectedLanguage={selectedLanguage} socketId={socket.id} compact/>
                         </div>
                       ))}
                     </div>
@@ -723,8 +592,7 @@ export default function VideoRoom({
             // Gallery grid
             <div className={`w-full h-full grid gap-3 md:gap-4 items-center justify-center ${getGridClass(allParticipants.length)}`}>
               {allParticipants.map(p => (
-                <VideoTile key={p.id} p={p} isMuted={isMuted} volumeLevel={volumeLevel}
-                  translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker}
+                <VideoTile key={p.id} p={p} isMuted={isMuted}
                   selectedLanguage={selectedLanguage} socketId={socket.id} iceState={p.iceState}/>
               ))}
             </div>
@@ -759,9 +627,6 @@ export default function VideoRoom({
             </CtrlBtn>
             <CtrlBtn id="video-btn" onClick={toggleVideo} active={!isVideoOn} color="rose" title="Toggle camera">
               {isVideoOn ? <VideoIcon className="w-5 h-5 text-[#00E5C7]"/> : <VideoOff className="w-5 h-5"/>}
-            </CtrlBtn>
-            <CtrlBtn id="blur-btn" onClick={() => setIsBlurActive(!isBlurActive)} active={isBlurActive} color="indigo" title="Toggle background blur">
-              <ImageIcon className={`w-5 h-5 ${isBlurActive ? 'text-white' : 'text-[#00E5C7]'}`}/>
             </CtrlBtn>
             <CtrlBtn id="screen-btn" onClick={toggleScreenShare} active={isScreenSharing} color="indigo" title="Share screen">
               <Monitor className="w-5 h-5"/>
@@ -857,7 +722,7 @@ function CtrlBtn({ id, onClick, active, color = 'rose', title, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // VideoTile — renders one participant's video + audio
 // ─────────────────────────────────────────────────────────────────────────────
-function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false, iceState }) {
+function VideoTile({ p, isMuted, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false, iceState }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -877,7 +742,7 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
 
   const isTranslating = translatingSpeakers[p.id] || (p.isLocal && translatingSpeakers[socketId]);
   const isDubbing     = activeDubbingSpeaker === p.id;
-  const isSpeaking    = p.isLocal ? (!isMuted && volumeLevel > 0.05) : p.audio;
+  const isSpeaking    = p.isLocal ? !isMuted : p.audio;
 
   let ring = 'border border-white/10';
   if (isDubbing || isTranslating) ring = 'ring-4 ring-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.6)] animate-pulse';
