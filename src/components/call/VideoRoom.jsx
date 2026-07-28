@@ -19,22 +19,47 @@ import { WebRTCManager } from '../../services/webrtc';
 import { getSocket } from '../../services/socket';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VideoRoom — Native WebRTC peer-to-peer video call
-//
-// FIX SUMMARY:
-//  1. WebRTC manager created ONLY after localStream is ready (no null stream)
-//  2. remotePeers tracks { stream, trackCount, hasVideo } so React re-renders
-//     when the VIDEO track arrives AFTER the audio track (ontrack fires twice)
-//  3. VideoTile ALWAYS renders the <video> element (hidden via CSS when no video)
-//     so WebRTC AUDIO plays even when the camera is off or stream has no video
+// Synthetic Stream Fallback (for insecure HTTP mobile contexts or blocked permissions)
 // ─────────────────────────────────────────────────────────────────────────────
+function createDummyStream() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(0, 0, 640, 480);
+  ctx.fillStyle = '#38BDF8';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Camera Offline / Blocked', 320, 240);
+
+  const videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+
+  let audioTrack = null;
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const dst = audioCtx.createMediaStreamDestination();
+    osc.connect(dst);
+    osc.start();
+    audioTrack = dst.stream.getAudioTracks()[0];
+    if (audioTrack) audioTrack.enabled = false;
+  } catch (e) {
+    console.warn('[VideoRoom] AudioContext fallback failed:', e);
+  }
+
+  const tracks = [videoTrack];
+  if (audioTrack) tracks.push(audioTrack);
+  return new MediaStream(tracks);
+}
+
 export default function VideoRoom({
   roomCode, currentUser, selectedLanguage, setSelectedLanguage,
   languages, userSettings, onLeaveCall
 }) {
   const socket = getSocket();
 
-  // ── Local media ────────────────────────────────────────────────────────────
+  // ── Media ──────────────────────────────────────────────────────────────────
   const [localStream, setLocalStream]     = useState(null);
   const [isMuted, setIsMuted]             = useState(false);
   const [isVideoOn, setIsVideoOn]         = useState(true);
@@ -42,12 +67,11 @@ export default function VideoRoom({
   const localStreamRef                    = useRef(null);
 
   // ── Remote peers ───────────────────────────────────────────────────────────
-  // { socketId: { stream, trackCount, hasVideo, name, spokenLanguage } }
   const [remotePeers, setRemotePeers]     = useState({});
   const webrtcManagerRef                  = useRef(null);
   const hasJoinedRef                      = useRef(false);
 
-  // ── Socket participants (metadata) ─────────────────────────────────────────
+  // ── Socket participants ────────────────────────────────────────────────────
   const [socketParticipants, setSocketParticipants] = useState([]);
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -99,42 +123,52 @@ export default function VideoRoom({
   const shareableJoinUrl = `${window.location.origin}/join/${roomCode}`;
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 1 — Capture local camera + mic (loose constraints for compatibility)
+  // STEP 1 — Capture camera/mic (with automatic dummy fallback)
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     let mounted = true;
-    let captured = null;
 
     const capture = async () => {
+      let captured = null;
       try {
-        // Loose constraints — works on phones, tablets, old laptops
-        captured = await navigator.mediaDevices.getUserMedia({
-          video: true,           // just "true" — let browser choose best settings
-          audio: { echoCancellation: true, noiseSuppression: true }
-        }).catch(() =>
-          // Camera failed → try audio only
-          navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null)
-        );
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          captured = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: { echoCancellation: true, noiseSuppression: true }
+          }).catch(() =>
+            navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null)
+          );
+        }
+      } catch (err) {
+        console.warn('[VideoRoom] Camera capture warning:', err);
+      }
 
-        if (!captured || !mounted) return;
-        localStreamRef.current = captured;
-        setLocalStream(captured);
+      // If camera/mic capture returned null or threw, generate synthetic stream so call ALWAYS connects
+      if (!captured) {
+        console.warn('[VideoRoom] Using dummy stream fallback for connection');
+        captured = createDummyStream();
+      }
 
+      if (!mounted) return;
+      localStreamRef.current = captured;
+      setLocalStream(captured);
+
+      try {
         const mixer = new AudioMixer();
         audioMixerRef.current = mixer;
         mixer.initialize(captured);
-
-        console.log('[VideoRoom] ✅ Local stream ready:',
-          captured.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
-      } catch (err) {
-        console.error('[VideoRoom] getUserMedia failed:', err);
+      } catch (e) {
+        console.warn('[VideoRoom] AudioMixer init failed:', e);
       }
+
+      console.log('[VideoRoom] ✅ Local stream initialized:',
+        captured.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', '));
     };
 
     capture();
     return () => {
       mounted = false;
-      captured?.getTracks().forEach(t => t.stop());
+      localStreamRef.current?.getTracks().forEach(t => t.stop());
       audioMixerRef.current?.stop();
     };
   }, []);
@@ -153,9 +187,6 @@ export default function VideoRoom({
   // ═══════════════════════════════════════════════════════════════════════════
   // WebRTC callbacks
   // ═══════════════════════════════════════════════════════════════════════════
-
-  // Called by WebRTCManager.ontrack — once for audio track, once for video track
-  // trackCount and hasVideo change each time → React re-renders the video tile
   const handleRemoteStreamAdded = useCallback((peerId, stream, trackCount, hasVideo) => {
     console.log(`[VideoRoom] Remote stream update for ${peerId}: ${trackCount} track(s), hasVideo=${hasVideo}`);
     setRemotePeers(prev => ({
@@ -182,18 +213,21 @@ export default function VideoRoom({
     if (hasJoinedRef.current) return;
     hasJoinedRef.current = true;
 
-    console.log('[VideoRoom] Stream ready — joining room');
+    console.log('[VideoRoom] Stream ready — joining room and initializing WebRTC');
 
     fetch(`/api/calls/${roomCode}`)
       .then(r => r.json())
       .then(d => { if (d.session?.hostId === currentUser?.id) setIsHost(true); })
       .catch(() => {});
 
-    const speechService = new SpeechTranslationService(socket, selectedLanguage, selectedLanguage, currentUser.name);
-    speechServiceRef.current = speechService;
-    speechService.start(localStream);
+    try {
+      const speechService = new SpeechTranslationService(socket, selectedLanguage, selectedLanguage, currentUser.name);
+      speechServiceRef.current = speechService;
+      speechService.start(localStream);
+    } catch (e) {
+      console.warn('[VideoRoom] SpeechTranslation init warning:', e);
+    }
 
-    // Create WebRTC manager WITH the real stream — offers will carry tracks
     const rtcManager = new WebRTCManager(socket, localStream, handleRemoteStreamAdded, handleRemoteStreamRemoved);
     webrtcManagerRef.current = rtcManager;
 
@@ -202,7 +236,6 @@ export default function VideoRoom({
       user: { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar, isHost: false, spokenLanguage: selectedLanguage }
     });
 
-    // ── Existing peers → we initiate offers (we are the newcomer) ─────────
     const onExistingPeers = ({ peerSocketIds }) => {
       console.log('[VideoRoom] existing-peers:', peerSocketIds);
       if (peerSocketIds.length === 0) {
@@ -213,7 +246,6 @@ export default function VideoRoom({
       }
     };
 
-    // ── New peer joined → they will send us an offer; just track metadata ─
     const onUserJoined = ({ socketId, user }) => {
       console.log('[VideoRoom] user-joined:', socketId, user?.name);
       setConnectionStatus('connecting');
@@ -300,7 +332,7 @@ export default function VideoRoom({
 
     return () => {
       hasJoinedRef.current = false;
-      speechService.stop();
+      speechServiceRef.current?.stop();
       socket.emit('leave-session');
       rtcManager.destroy();
 
@@ -514,7 +546,6 @@ export default function VideoRoom({
 
         {/* Video grid */}
         <div className="flex-1 p-3 md:p-5 flex items-center justify-center overflow-hidden">
-
           {!localStream ? (
             <div className="flex flex-col items-center gap-4 text-slate-400">
               <div className="w-16 h-16 rounded-full border-2 border-[#00E5C7] border-t-transparent animate-spin"/>
@@ -625,7 +656,7 @@ export default function VideoRoom({
           <div className="bg-[#0A0E1A] border border-white/10 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl relative">
             <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white text-xl">✕</button>
             <h3 className="text-lg font-bold text-white">📱 Scan to Join</h3>
-            <p className="text-xs text-slate-400">No app needed — just scan and join instantly.</p>
+            <p className="text-xs text-slate-400">No app needed — scan and join instantly.</p>
             <div className="p-4 bg-white rounded-2xl inline-block">
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareableJoinUrl)}`} alt="QR" className="w-44 h-44 mx-auto"/>
             </div>
@@ -655,35 +686,24 @@ function CtrlBtn({ id, onClick, active, color = 'rose', title, children }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VideoTile — renders one participant's video + audio
-//
-// CRITICAL FIX:
-//  • The <video> element is ALWAYS rendered in the DOM (never conditionally removed)
-//    This ensures WebRTC AUDIO plays even when video is off / stream has no video track
-//  • Video is shown/hidden via CSS (display: block / none)
-//  • useEffect depends on BOTH p.stream AND p.trackCount so it re-runs when the
-//    video track arrives after the audio track (they come in separate ontrack events)
-//  • We also listen to stream's 'addtrack' event for any late-arriving tracks
 // ─────────────────────────────────────────────────────────────────────────────
 function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false }) {
   const videoRef = useRef(null);
 
-  // Re-run when: stream changes, or trackCount changes (new track arrived)
   useEffect(() => {
     const el = videoRef.current;
     if (!el || !p.stream) return;
 
-    // Always re-set srcObject so new tracks (video arriving after audio) take effect
     el.srcObject = p.stream;
     el.play().catch(() => {});
 
-    // Also listen for tracks added to the stream AFTER this effect runs
     const onAddTrack = () => {
       el.srcObject = p.stream;
       el.play().catch(() => {});
     };
     p.stream.addEventListener('addtrack', onAddTrack);
     return () => p.stream.removeEventListener('addtrack', onAddTrack);
-  }, [p.stream, p.trackCount]); // ← trackCount is the key to re-render on video track arrival
+  }, [p.stream, p.trackCount]);
 
   const isTranslating = translatingSpeakers[p.id] || (p.isLocal && translatingSpeakers[socketId]);
   const isDubbing     = activeDubbingSpeaker === p.id;
@@ -694,26 +714,21 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
   else if (isSpeaking)            ring = 'ring-4 ring-[#00E5C7] shadow-[0_0_25px_rgba(0,229,199,0.5)]';
 
   const wrapClass = compact ? 'w-full h-full' : large ? 'w-full h-full' : 'relative w-full min-h-[200px] max-h-[360px] md:min-h-[240px] md:max-h-[380px]';
-
-  // Video is considered active if the stream has a live video track
   const videoActive = p.hasVideo && p.isVideoActive !== false;
 
   return (
     <div className={`${compact ? '' : wrapClass} bg-[#0A0E1A]/90 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center relative transition-all duration-300 ${ring}`}>
-
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      {/* VIDEO element ALWAYS in DOM — ensures audio plays even when hidden  */}
-      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* Video element ALWAYS in DOM so WebRTC audio plays */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={p.isLocal}   // only mute our OWN video (no echo)
+        muted={p.isLocal}
         style={{ display: videoActive && p.stream ? 'block' : 'none' }}
         className={`w-full h-full object-cover ${p.isLocal ? '-scale-x-100' : ''}`}
       />
 
-      {/* Avatar — shown when no video */}
+      {/* Avatar fallback */}
       {(!videoActive || !p.stream) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <div className={`rounded-full bg-gradient-to-br from-indigo-900 to-slate-800 border border-indigo-500/30 flex items-center justify-center font-bold text-indigo-200

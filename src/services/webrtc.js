@@ -1,6 +1,5 @@
 // Real Multi-Peer WebRTC & TURN Relay Service for LinguaVersa
-// Full fix: per-peer MediaStream management ensures ontrack fires correctly
-// for both audio and video tracks regardless of arrival order.
+// Full fix: ICE candidate buffering + multi-STUN/TURN fallback + per-peer MediaStream management.
 
 const getIceServers = () => {
   const customTurnUrl = import.meta.env?.VITE_TURN_URL;
@@ -8,17 +7,21 @@ const getIceServers = () => {
   const customCredential = import.meta.env?.VITE_TURN_CREDENTIAL;
 
   const iceServers = [
+    // High-availability public STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:global.stun.twilio.com:3478' }
   ];
 
   if (customTurnUrl) {
     iceServers.push({ urls: customTurnUrl, username: customUsername || '', credential: customCredential || '' });
   } else {
+    // Metered OpenRELAY TURN fallbacks
     iceServers.push(
       { urls: 'turn:openrelay.metered.ca:80',           username: 'openrelayproject', credential: 'openrelayproject' },
       { urls: 'turn:openrelay.metered.ca:443',          username: 'openrelayproject', credential: 'openrelayproject' },
@@ -39,10 +42,12 @@ export class WebRTCManager {
     this.onRemoteStreamAdded = onRemoteStreamAdded;
     this.onRemoteStreamRemoved = onRemoteStreamRemoved;
     this.peerConnections     = new Map();   // socketId → RTCPeerConnection
-    this._peerStreams         = new Map();   // socketId → MediaStream (we manage this)
+    this._peerStreams        = new Map();   // socketId → MediaStream
+    this._iceBuffers         = new Map();   // socketId → RTCIceCandidate[]
     this._boundHandlers      = {};
 
-    console.log('[WebRTC] Manager created. Tracks:', localStream?.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', ') || 'none');
+    console.log('[WebRTC] Manager initialized with local tracks:',
+      localStream?.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', ') || 'none');
     this.setupSocketListeners();
   }
 
@@ -60,6 +65,8 @@ export class WebRTCManager {
         } else {
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
         }
+        await this.flushIceBuffer(senderSocketId, pc);
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         this.socket.emit('webrtc-answer', { targetSocketId: senderSocketId, answer });
@@ -77,6 +84,7 @@ export class WebRTCManager {
       try {
         if (pc.signalingState === 'have-local-offer') {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          await this.flushIceBuffer(senderSocketId, pc);
         }
       } catch (err) {
         console.error('[WebRTC] Answer handling error:', err);
@@ -86,7 +94,7 @@ export class WebRTCManager {
     // ── Incoming ICE candidate ──────────────────────────────────────────────
     const onIce = async ({ senderSocketId, candidate }) => {
       const pc = this.peerConnections.get(senderSocketId);
-      if (pc && candidate) {
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
@@ -94,6 +102,12 @@ export class WebRTCManager {
             console.warn('[WebRTC] ICE candidate error:', err.message);
           }
         }
+      } else {
+        // Buffer until remote description is set
+        if (!this._iceBuffers.has(senderSocketId)) {
+          this._iceBuffers.set(senderSocketId, []);
+        }
+        this._iceBuffers.get(senderSocketId).push(candidate);
       }
     };
 
@@ -111,7 +125,19 @@ export class WebRTCManager {
     this._boundHandlers = { onOffer, onAnswer, onIce, onPeerGone };
   }
 
-  // ── Create RTCPeerConnection for a specific peer ─────────────────────────
+  async flushIceBuffer(targetSocketId, pc) {
+    const buffer = this._iceBuffers.get(targetSocketId) || [];
+    while (buffer.length > 0) {
+      const candidate = buffer.shift();
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn('[WebRTC] Error adding buffered ICE candidate:', err.message);
+      }
+    }
+  }
+
+  // ── Create RTCPeerConnection ──────────────────────────────────────────────
   createPeerConnection(targetSocketId) {
     const existing = this.peerConnections.get(targetSocketId);
     if (existing && existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
@@ -122,7 +148,7 @@ export class WebRTCManager {
     const pc = new RTCPeerConnection(getIceServers());
     this.peerConnections.set(targetSocketId, pc);
 
-    // ── Add ALL local tracks so remote gets our audio + video ──────────────
+    // ── Attach local tracks ─────────────────────────────────────────────────
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => {
         try {
@@ -130,8 +156,6 @@ export class WebRTCManager {
           console.log(`[WebRTC] Added local ${track.kind} track to pc for ${targetSocketId}`);
         } catch (e) { console.warn('[WebRTC] addTrack error:', e); }
       });
-    } else {
-      console.warn('[WebRTC] ⚠ No local stream when creating peer connection!');
     }
 
     // ── ICE candidate relay ─────────────────────────────────────────────────
@@ -145,47 +169,36 @@ export class WebRTCManager {
       if (e.errorCode !== 701) console.warn(`[WebRTC] ICE error (${e.errorCode}): ${e.errorText}`);
     };
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // KEY FIX: ontrack fires once per track (audio AND video separately).
-    // We maintain a per-peer MediaStream and ADD each track to it as it arrives.
-    // We then notify VideoRoom with the SAME stream object + an updated trackCount
-    // so React knows to re-render the video tile.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Remote track event ──────────────────────────────────────────────────
     pc.ontrack = ({ track, streams }) => {
-      console.log(`[WebRTC] ← remote ${track.kind} track from ${targetSocketId} (readyState: ${track.readyState})`);
-
-      // Get or create a dedicated MediaStream for this peer
+      console.log(`[WebRTC] ← remote ${track.kind} track from ${targetSocketId}`);
       let peerStream = this._peerStreams.get(targetSocketId);
       if (!peerStream) {
-        // If the browser provides a stream directly, use it; otherwise create one
         peerStream = (streams && streams[0]) ? streams[0] : new MediaStream();
         this._peerStreams.set(targetSocketId, peerStream);
       }
 
-      // Add the incoming track to our managed stream (if not already there)
-      const existingTrackIds = peerStream.getTracks().map(t => t.id);
-      if (!existingTrackIds.includes(track.id)) {
+      const existingIds = peerStream.getTracks().map(t => t.id);
+      if (!existingIds.includes(track.id)) {
         peerStream.addTrack(track);
       }
 
       const trackCount = peerStream.getTracks().length;
       const hasVideo   = peerStream.getVideoTracks().some(t => t.readyState === 'live');
-      console.log(`[WebRTC] Peer ${targetSocketId} stream: ${trackCount} track(s), hasVideo: ${hasVideo}`);
+      console.log(`[WebRTC] Peer ${targetSocketId} stream updated: ${trackCount} track(s), hasVideo=${hasVideo}`);
 
-      // Notify VideoRoom — trackCount forces React to re-render even if stream ref is same
       this.onRemoteStreamAdded(targetSocketId, peerStream, trackCount, hasVideo);
     };
 
-    // ── Connection monitoring ───────────────────────────────────────────────
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] ${targetSocketId} → ${pc.connectionState}`);
+      console.log(`[WebRTC] Connection state for ${targetSocketId}: ${pc.connectionState}`);
     };
 
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
-      console.log(`[WebRTC] ${targetSocketId} ICE → ${state}`);
+      console.log(`[WebRTC] ICE connection state for ${targetSocketId}: ${state}`);
       if (state === 'failed') {
-        console.warn(`[WebRTC] ICE failed for ${targetSocketId} – restarting`);
+        console.warn(`[WebRTC] ICE failed for ${targetSocketId} – attempting restart`);
         this.attemptIceRestart(targetSocketId);
         this.socket.emit('webrtc-log-error', { targetSocketId, state, timestamp: new Date().toISOString() });
       }
@@ -228,7 +241,7 @@ export class WebRTCManager {
     }
   }
 
-  // ── Update local stream across all connections ─────────────────────────────
+  // ── Update local stream ────────────────────────────────────────────────────
   async updateLocalStream(newStream) {
     this.localStream = newStream;
     if (!newStream || this.peerConnections.size === 0) return;
@@ -242,7 +255,7 @@ export class WebRTCManager {
       for (const track of newStream.getTracks()) {
         const sender = senders.find(s => s.track?.kind === track.kind);
         if (sender) {
-          await sender.replaceTrack(track).catch(e => console.warn('[WebRTC] replaceTrack:', e));
+          await sender.replaceTrack(track).catch(e => console.warn('[WebRTC] replaceTrack error:', e));
         } else {
           pc.addTrack(track, newStream);
           needsRenegotiation = true;
@@ -252,20 +265,22 @@ export class WebRTCManager {
     }
   }
 
-  // ── Close single peer connection ───────────────────────────────────────────
+  // ── Close connection ───────────────────────────────────────────────────────
   closePeerConnection(targetSocketId) {
     const pc = this.peerConnections.get(targetSocketId);
     if (pc) { pc.close(); this.peerConnections.delete(targetSocketId); }
     this._peerStreams.delete(targetSocketId);
+    this._iceBuffers.delete(targetSocketId);
     this.onRemoteStreamRemoved(targetSocketId);
   }
 
-  // ── Tear down everything ───────────────────────────────────────────────────
+  // ── Teardown ───────────────────────────────────────────────────────────────
   destroy() {
     console.log('[WebRTC] Destroying manager');
     this.peerConnections.forEach((pc, id) => { pc.close(); this.onRemoteStreamRemoved(id); });
     this.peerConnections.clear();
     this._peerStreams.clear();
+    this._iceBuffers.clear();
 
     const { onOffer, onAnswer, onIce, onPeerGone } = this._boundHandlers;
     if (onOffer)    this.socket.off('webrtc-offer',         onOffer);
