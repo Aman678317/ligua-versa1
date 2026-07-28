@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers } from './db.js';
+import { mockLanguages, mockMeetings, mockSummaries, mockAnalytics, mockUsers, mockWhispers } from './db.js';
 import { processSpeechTranslation, generateAiSummary } from './aiService.js';
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -244,6 +244,40 @@ app.get('/api/meetings/:code', async (req, res) => {
   }
 
   res.json({ success: true, meeting });
+});
+
+app.get('/api/whispers', (req, res) => {
+  // Return whispers sorted by newest first
+  const sortedWhispers = [...mockWhispers].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  res.json({ success: true, whispers: sortedWhispers });
+});
+
+app.post('/api/whispers', (req, res) => {
+  const { text, bgImageUrl } = req.body;
+  if (!text) {
+    return res.status(400).json({ success: false, message: 'Text is required' });
+  }
+
+  const newWhisper = {
+    id: `w-${Date.now()}`,
+    text,
+    bgImageUrl: bgImageUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
+    likes: 0,
+    timestamp: new Date().toISOString()
+  };
+
+  mockWhispers.unshift(newWhisper); // Add to beginning of array
+  res.json({ success: true, whisper: newWhisper });
+});
+
+app.post('/api/whispers/:id/like', (req, res) => {
+  const { id } = req.params;
+  const whisper = mockWhispers.find(w => w.id === id);
+  if (whisper) {
+    whisper.likes += 1;
+    return res.json({ success: true, likes: whisper.likes });
+  }
+  return res.status(404).json({ success: false, message: 'Whisper not found' });
 });
 
 app.get('/api/summaries', (req, res) => {

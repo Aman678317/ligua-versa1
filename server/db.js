@@ -106,3 +106,34 @@ export const mockAnalytics = {
     { time: '11:00', latency: 1820 },
   ]
 };
+
+export const mockWhispers = [
+  {
+    id: 'w-1',
+    text: 'I secretly translate all my zoom calls because I never learned the language I put on my resume 😭',
+    bgImageUrl: 'https://images.unsplash.com/photo-1517842645767-c639042777db?w=600&auto=format&fit=crop&q=80',
+    likes: 24,
+    timestamp: new Date(Date.now() - 3600000).toISOString()
+  },
+  {
+    id: 'w-2',
+    text: 'Told my boss I was having internet issues but I was actually just playing with the real-time AI dubbing feature.',
+    bgImageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
+    likes: 13,
+    timestamp: new Date(Date.now() - 7200000).toISOString()
+  },
+  {
+    id: 'w-3',
+    text: 'I have a huge crush on the German TTS voice... is that weird?',
+    bgImageUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&auto=format&fit=crop&q=80',
+    likes: 42,
+    timestamp: new Date(Date.now() - 86400000).toISOString()
+  },
+  {
+    id: 'w-4',
+    text: 'I literally cannot do a meeting without subtitles anymore. Normal life needs captions.',
+    bgImageUrl: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=600&auto=format&fit=crop&q=80',
+    likes: 156,
+    timestamp: new Date(Date.now() - 172800000).toISOString()
+  }
+];
