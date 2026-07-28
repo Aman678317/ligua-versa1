@@ -36,11 +36,12 @@ const getIceServers = () => {
 };
 
 export class WebRTCManager {
-  constructor(socket, localStream, onRemoteStreamAdded, onRemoteStreamRemoved) {
+  constructor(socket, localStream, onRemoteStreamAdded, onRemoteStreamRemoved, onIceStateChange) {
     this.socket              = socket;
     this.localStream         = localStream;
     this.onRemoteStreamAdded = onRemoteStreamAdded;
     this.onRemoteStreamRemoved = onRemoteStreamRemoved;
+    this.onIceStateChange    = onIceStateChange;
     this.peerConnections     = new Map();   // socketId → RTCPeerConnection
     this._peerStreams        = new Map();   // socketId → MediaStream
     this._iceBuffers         = new Map();   // socketId → RTCIceCandidate[]
@@ -200,6 +201,7 @@ export class WebRTCManager {
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       console.log(`[WebRTC] ICE connection state for ${targetSocketId}: ${state}`);
+      if (this.onIceStateChange) this.onIceStateChange(targetSocketId, state);
       if (state === 'failed') {
         console.warn(`[WebRTC] ICE failed for ${targetSocketId} – attempting restart`);
         this.attemptIceRestart(targetSocketId);

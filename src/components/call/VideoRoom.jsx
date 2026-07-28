@@ -195,8 +195,8 @@ export default function VideoRoom({
   // ═══════════════════════════════════════════════════════════════════════════
   // WebRTC callbacks
   // ═══════════════════════════════════════════════════════════════════════════
-  const handleRemoteStreamAdded = useCallback((peerId, stream, trackCount, hasVideo) => {
-    console.log(`[VideoRoom] Remote stream update for ${peerId}: ${trackCount} track(s), hasVideo=${hasVideo}`);
+  const handleRemoteStreamAdded = useCallback((peerId, stream, trackCount, hasVideo, iceState) => {
+    console.log(`[VideoRoom] Remote stream update for ${peerId}: ${trackCount} track(s), hasVideo=${hasVideo}, iceState=${iceState}`);
     setRemotePeers(prev => ({
       ...prev,
       [peerId]: {
@@ -204,6 +204,7 @@ export default function VideoRoom({
         stream,
         trackCount: trackCount || 0,
         hasVideo:   hasVideo || false,
+        iceState:   iceState || 'checking',
       }
     }));
     setConnectionStatus('connected');
@@ -236,7 +237,14 @@ export default function VideoRoom({
       console.warn('[VideoRoom] SpeechTranslation init warning:', e);
     }
 
-    const rtcManager = new WebRTCManager(socket, localStream, handleRemoteStreamAdded, handleRemoteStreamRemoved);
+    const handleIceStateChange = (peerId, state) => {
+      setRemotePeers(prev => ({
+        ...prev,
+        [peerId]: { ...(prev[peerId] || {}), iceState: state }
+      }));
+    };
+
+    const rtcManager = new WebRTCManager(socket, localStream, handleRemoteStreamAdded, handleRemoteStreamRemoved, handleIceStateChange);
     webrtcManagerRef.current = rtcManager;
 
     socket.emit('join-room', {
@@ -364,7 +372,7 @@ export default function VideoRoom({
       socket.off('disconnect',                 onDisconnect);
       socket.off('connect',                    onConnect);
     };
-  }, [localStream, roomCode]);
+  }, [localStream, roomCode, socket.id]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Controls
@@ -588,7 +596,7 @@ export default function VideoRoom({
               {allParticipants.map(p => (
                 <VideoTile key={p.id} p={p} isMuted={isMuted} volumeLevel={volumeLevel}
                   translatingSpeakers={translatingSpeakers} activeDubbingSpeaker={activeDubbingSpeaker}
-                  selectedLanguage={selectedLanguage} socketId={socket.id}/>
+                  selectedLanguage={selectedLanguage} socketId={socket.id} iceState={p.iceState}/>
               ))}
             </div>
           )}
@@ -695,7 +703,7 @@ function CtrlBtn({ id, onClick, active, color = 'rose', title, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // VideoTile — renders one participant's video + audio
 // ─────────────────────────────────────────────────────────────────────────────
-function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false }) {
+function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbingSpeaker, selectedLanguage, socketId, large = false, compact = false, iceState }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -744,8 +752,10 @@ function VideoTile({ p, isMuted, volumeLevel, translatingSpeakers, activeDubbing
             {(p.name || 'P').charAt(0).toUpperCase()}
           </div>
           {!compact && <span className={`font-bold text-white ${large ? 'text-lg' : 'text-sm'}`}>{p.name}{p.isLocal ? ' (You)' : ''}</span>}
-          {!compact && !p.isLocal && !p.stream && (
-            <span className="text-xs text-slate-500 animate-pulse">Connecting video…</span>
+          {(!compact && !p.isLocal) && (
+            <span className="text-xs text-slate-500 animate-pulse">
+              {!p.stream ? `Connecting video… (${iceState || 'new'})` : ''}
+            </span>
           )}
         </div>
       )}
