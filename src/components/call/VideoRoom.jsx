@@ -554,7 +554,8 @@ export default function VideoRoom({
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="relative w-full h-[calc(100vh-4rem)] bg-[#05060B] flex overflow-hidden">
+    <div className="relative w-full h-[calc(100vh-4rem)] bg-[#05060B] flex overflow-hidden animate-hudMount">
+      <div className="scanline-overlay"></div>
 
       <EmojiReactionsOverlay floatingReactions={floatingReactions} />
 
@@ -580,7 +581,7 @@ export default function VideoRoom({
       <div className="flex-1 flex flex-col relative h-full overflow-hidden z-10">
 
         {/* Status bar */}
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#0A0E1A]/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-lg">
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-3 marvel-hud px-4 py-2 rounded-2xl shadow-lg animate-hudMount" style={{ animationDelay: '0.2s' }}>
           <div className="flex items-center gap-2">
 
             <span className="text-xs font-bold text-white max-w-[90px] truncate">{roomCode}</span>
@@ -597,9 +598,9 @@ export default function VideoRoom({
         </div>
 
         {/* Top right */}
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2 animate-hudMount" style={{ animationDelay: '0.3s' }}>
           <button id="copy-link-btn" onClick={handleCopyLink}
-            className="px-3 py-1.5 rounded-xl bg-[#0A0E1A]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1.5 transition-all">
+            className="px-3 py-1.5 rounded-xl marvel-hud text-xs font-bold text-slate-200 hover:text-cyan-400 flex items-center gap-1.5 transition-all">
             {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400"/> : <Copy className="w-3.5 h-3.5 text-cyan-400"/>}
             <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
           </button>
@@ -609,7 +610,7 @@ export default function VideoRoom({
           </button>
           <button id="qr-btn" onClick={() => setShowQrModal(true)}
             className="px-2.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition-all">QR</button>
-          <div className="flex items-center gap-1 bg-[#0A0E1A]/80 backdrop-blur-md p-1 rounded-xl border border-white/10">
+          <div className="flex items-center gap-1 marvel-hud p-1 rounded-xl">
             {['gallery','speaker'].map(m => (
               <button key={m} onClick={() => setLayoutMode(m)}
                 className={`p-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all ${layoutMode===m ? 'bg-[#00E5C7] text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}>
@@ -699,7 +700,7 @@ export default function VideoRoom({
         )}
 
         {/* Control bar */}
-        <div className="h-20 bg-[#0A0E1A]/95 border-t border-white/10 px-3 sm:px-8 flex items-center justify-between z-30 shadow-2xl">
+        <div className="h-20 marvel-hud rounded-t-3xl border-t border-cyan-500/30 px-3 sm:px-8 flex items-center justify-between z-30 shadow-2xl animate-hudMount" style={{ animationDelay: '0.5s' }}>
           {/* Left */}
           <div className="flex items-center gap-2">
             <CtrlBtn id="mute-btn" onClick={toggleMute} active={isMuted} color="rose" title={isMuted ? 'Unmute' : 'Mute'}>

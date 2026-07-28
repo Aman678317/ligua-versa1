@@ -61,11 +61,11 @@ export default function DashboardLayout({
     }
   };
 
-  return (
-    <div className="min-h-[calc(100vh-4rem)] bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-[#00E5C7] selection:text-slate-950">
+    <div className="min-h-[calc(100vh-4rem)] bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-[#00E5C7] selection:text-slate-950 relative">
+      <div className="scanline-overlay"></div>
       
       {/* Google Meet-Style Clean Landing Hero */}
-      <section className="relative w-full py-12 lg:py-20 px-4 sm:px-8 max-w-7xl mx-auto flex-1 flex flex-col justify-center">
+      <section className="relative w-full py-12 lg:py-20 px-4 sm:px-8 max-w-7xl mx-auto flex-1 flex flex-col justify-center animate-hudMount">
         
         <VantaGlobe />
 
@@ -152,7 +152,7 @@ export default function DashboardLayout({
       </section>
 
       {/* Recent Scheduled Calls & AI Summaries Section */}
-      <section className="border-t border-white/10 bg-[#0A0E1A]/40 py-12 px-4 sm:px-8">
+      <section className="border-t border-cyan-500/30 bg-[#0A0E1A]/60 py-12 px-4 sm:px-8 relative z-10 animate-hudMount" style={{ animationDelay: '0.2s' }}>
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
           
           {/* Scheduled Calls List */}
@@ -162,8 +162,8 @@ export default function DashboardLayout({
             </h3>
 
             <div className="space-y-2">
-              {meetings.map((m) => (
-                <div key={m.id} className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 flex items-center justify-between hover:border-white/20 transition-all">
+              {meetings.map((m, index) => (
+                <div key={m.id} className="marvel-hud p-4 flex items-center justify-between hover:border-cyan-400 transition-all animate-hudMount" style={{ animationDelay: `${0.3 + (index * 0.1)}s` }}>
                   <div className="space-y-1">
                     <h4 className="text-xs font-bold text-white">{m.title}</h4>
                     <p className="text-[11px] font-mono text-cyan-400">{m.code}</p>
@@ -180,12 +180,12 @@ export default function DashboardLayout({
           </div>
 
           {/* Post-Call Summaries Quick Access */}
-          <div className="space-y-4">
+          <div className="space-y-4 animate-hudMount" style={{ animationDelay: '0.4s' }}>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <FileText className="w-4 h-4 text-indigo-400" /> Recent AI Meeting Summaries
             </h3>
 
-            <div className="p-5 rounded-2xl bg-slate-900/80 border border-white/10 space-y-3">
+            <div className="marvel-hud p-5 space-y-3">
               <div className="flex items-center justify-between text-xs text-slate-300">
                 <span className="font-bold text-white">Cross-Border Product Architecture Sync</span>
                 <span className="text-slate-500">Yesterday</span>
