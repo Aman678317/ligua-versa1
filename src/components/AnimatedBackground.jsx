@@ -5,34 +5,44 @@ const AnimatedBackground = () => {
   const myRef = useRef(null);
 
   useEffect(() => {
-    if (!vantaEffect && window.VANTA) {
-      setVantaEffect(
-        window.VANTA.HALO({
+    let effect;
+    let attempts = 0;
+    
+    const initVanta = () => {
+      if (myRef.current && window.VANTA && window.VANTA.NET) {
+        effect = window.VANTA.NET({
           el: myRef.current,
           mouseControls: true,
           touchControls: true,
           gyroControls: false,
           minHeight: 200.00,
           minWidth: 200.00,
-          backgroundColor: 0x131a43,
-          baseColor: 0x1a59,
-          size: 1,
-          amplitudeFactor: 1,
-          xOffset: 0,
-          yOffset: 0
-        })
-      );
-    }
-    
-    return () => {
-      if (vantaEffect) vantaEffect.destroy();
+          scale: 1.00,
+          scaleMobile: 1.00,
+          color: 0x876387,
+          backgroundColor: 0x5051e,
+          THREE: window.THREE // Pass THREE explicitly just in case
+        });
+        setVantaEffect(effect);
+      } else if (attempts < 20) {
+        attempts++;
+        setTimeout(initVanta, 500);
+      }
     };
-  }, [vantaEffect]);
+
+    initVanta();
+
+    return () => {
+      if (effect) effect.destroy();
+    };
+  }, []);
 
   return (
     <div 
       ref={myRef} 
-      className="fixed inset-0 z-[-1] overflow-hidden" 
+      id="vanta-bg"
+      className="fixed inset-0 z-[-1]"
+      style={{ width: '100%', height: '100%', position: 'fixed', top: 0, left: 0, zIndex: -1 }}
     />
   );
 };
