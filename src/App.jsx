@@ -201,7 +201,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-transparent text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative z-0">
-      {activeTab === 'dashboard' && <AnimatedBackground />}
+      <AnimatedBackground />
       
       {/* Top Navbar */}
       <Navbar

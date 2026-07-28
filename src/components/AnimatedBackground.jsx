@@ -22,6 +22,7 @@ const AnimatedBackground = () => {
           color: 0x41369d,
           color2: 0x5890b3,
           size: 1.50,
+          backgroundColor: 0x251c39,
           THREE: window.THREE // Pass THREE explicitly just in case
         });
         setVantaEffect(effect);
