@@ -362,6 +362,10 @@ io.on('connection', (socket) => {
       session.participantsCount = room.participants.size;
     }
 
+    // Send existing peer IDs to the new joiner so they can initiate WebRTC offers
+    const existingPeerIds = Array.from(room.participants.keys()).filter(id => id !== socket.id);
+    socket.emit('existing-peers', { peerSocketIds: existingPeerIds });
+
     io.to(roomCode).emit('room-participants-update', Array.from(room.participants.values()));
     socket.emit('room-chat-history', room.messages);
     socket.emit('room-polls-history', room.polls);

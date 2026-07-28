@@ -93,11 +93,16 @@ export class WebRTCManager {
       }
     });
 
-    this.socket.on('user-left', ({ socketId }) => {
-      console.log(`[WebRTC] Peer ${socketId} left room, closing connection.`);
+    // Handle both event names for peer departure
+    const handlePeerGone = ({ socketId }) => {
+      console.log(`[WebRTC] Peer ${socketId} left, closing connection.`);
       this.closePeerConnection(socketId);
-    });
+    };
+
+    this.socket.on('user-left', handlePeerGone);
+    this.socket.on('peer-left', handlePeerGone);
   }
+
 
   createPeerConnection(targetSocketId) {
     if (this.peerConnections.has(targetSocketId)) {

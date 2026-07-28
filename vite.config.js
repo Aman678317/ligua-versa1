@@ -6,6 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: true,           // expose on all network interfaces (for phone testing on same WiFi)
+    allowedHosts: 'all',  // allow any hostname (local IP, ngrok, etc.)
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
