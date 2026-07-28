@@ -328,7 +328,7 @@ export default function VideoRoom({
           setConnectionStatus('alone');
         } else {
           setConnectionStatus('connecting');
-          // Perfect negotiation will automatically handle offers when tracks are added.
+          peerSocketIds.forEach(id => rtcManager.initiateOffer(id));
         }
       };
 
@@ -339,6 +339,7 @@ export default function VideoRoom({
           ...prev,
           [socketId]: { ...(prev[socketId] || {}), name: user?.name || 'Participant', spokenLanguage: user?.spokenLanguage || 'en' }
         }));
+        rtcManager.initiateOffer(socketId);
       };
 
       const onParticipants = (participants) => {
