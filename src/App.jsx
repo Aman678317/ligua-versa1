@@ -6,7 +6,6 @@ import VideoRoom from './components/call/VideoRoom';
 import MeetingSummaryView from './components/summary/MeetingSummaryView';
 import AdminAnalytics from './components/analytics/AdminAnalytics';
 import SettingsTab from './components/settings/SettingsTab';
-import WhispersFeed from './components/whispers/WhispersFeed';
 import AuthModal from './components/auth/AuthModal';
 import ScheduleMeetingModal from './components/modals/ScheduleMeetingModal';
 import MeetingCreatedModal from './components/modals/MeetingCreatedModal';
@@ -265,10 +264,6 @@ export default function App() {
           <SettingsTab
             onSaveSettings={(newSettings) => setUserSettings(prev => ({ ...prev, ...newSettings }))}
           />
-        )}
-
-        {activeTab === 'whispers' && (
-          <WhispersFeed />
         )}
       </main>
 

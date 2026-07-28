@@ -1,73 +1,136 @@
-// Live STT -> NMT -> TTS Real-time Pipeline Service for LinguaVersa
+import { Buffer } from 'buffer';
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 /**
- * Process spoken text or audio chunk by invoking the Python AI service
+ * Process spoken text or audio chunk by invoking OpenAI APIs
  */
 export async function processSpeechTranslation({ speakerId, speakerName, text, audioBase64, sourceLang, targetLang }) {
   const startTime = Date.now();
+  let originalText = text;
+  let translatedText = text;
+  let outputAudioBase64 = null;
 
   try {
-    const response = await fetch(`${AI_SERVICE_URL}/translate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        speaker_id: speakerId,
-        speaker_name: speakerName,
-        text: text || '',
-        audio_base64: audioBase64 || null,
-        source_lang: sourceLang || 'en',
-        target_lang: targetLang || 'en'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`AI service responded with HTTP status ${response.status}`);
+    if (!OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is not set. Please add it to your environment variables or terminal.');
     }
 
-    const data = await response.json();
-    const endTime = Date.now();
+    // 1. Speech-to-Text (Whisper)
+    if (audioBase64) {
+      const audioBuffer = Buffer.from(audioBase64, 'base64');
+      const blob = new Blob([audioBuffer], { type: 'audio/webm' }); 
+      
+      const formData = new FormData();
+      formData.append('file', blob, 'audio.webm');
+      formData.append('model', 'whisper-1');
+      if (sourceLang && sourceLang !== 'auto') {
+        formData.append('language', sourceLang.substring(0, 2));
+      }
 
+      const sttRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: formData
+      });
+
+      if (!sttRes.ok) {
+        throw new Error(`Whisper API Error: ${await sttRes.text()}`);
+      }
+      
+      const sttData = await sttRes.json();
+      originalText = sttData.text;
+    }
+
+    // 2. Translation (GPT-4o-mini)
+    if (originalText && sourceLang !== targetLang) {
+      const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: `Translate the following speech from ${sourceLang} to ${targetLang}. Return only the translation, no extra text.` },
+            { role: 'user', content: originalText }
+          ]
+        })
+      });
+
+      if (!gptRes.ok) {
+        throw new Error(`GPT API Error: ${await gptRes.text()}`);
+      }
+      
+      const gptData = await gptRes.json();
+      translatedText = gptData.choices[0].message.content;
+    } else {
+      translatedText = originalText;
+    }
+
+    // 3. Text-to-Speech (OpenAI TTS)
+    if (translatedText) {
+      const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          voice: 'nova',
+          input: translatedText,
+          response_format: 'mp3'
+        })
+      });
+
+      if (!ttsRes.ok) {
+        throw new Error(`TTS API Error: ${await ttsRes.text()}`);
+      }
+
+      const audioArrayBuffer = await ttsRes.arrayBuffer();
+      const outputBuffer = Buffer.from(audioArrayBuffer);
+      outputAudioBase64 = outputBuffer.toString('base64');
+    }
+
+    const endTime = Date.now();
     return {
-      id: data.chunk_id || `chunk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      speakerId: data.speaker_id || speakerId,
-      speakerName: data.speaker_name || speakerName,
-      originalText: data.original_text || text,
-      translatedText: data.translated_text,
-      audioBase64: data.audio_base64 || null,
-      audioFormat: data.audio_format || 'mp3',
-      sourceLang: data.source_lang || sourceLang,
-      targetLang: data.target_lang || targetLang,
+      id: `chunk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      speakerId,
+      speakerName,
+      originalText: originalText || '',
+      translatedText: translatedText || '',
+      audioBase64: outputAudioBase64,
+      audioFormat: 'mp3',
+      sourceLang,
+      targetLang,
       timestamp: new Date().toISOString(),
       metrics: {
-        sttLatencyMs: data.metrics?.stt_time_ms || 120,
-        nmtLatencyMs: data.metrics?.nmt_time_ms || 180,
-        ttsLatencyMs: data.metrics?.tts_time_ms || 200,
-        totalLatencyMs: data.metrics?.total_latency_ms || (endTime - startTime),
-        engine: data.metrics?.engine || 'FastAPI AI Pipeline'
+        totalLatencyMs: endTime - startTime,
+        engine: 'OpenAI API (Whisper + GPT + TTS)'
       }
     };
-  } catch (err) {
-    console.warn('[aiService] Python AI Service unavailable, falling back:', err.message);
 
-    // Dynamic fallback when ai-service is unreachable
+  } catch (err) {
+    console.warn('[aiService] OpenAI integration error:', err.message);
+
+    // Dynamic fallback when API is missing or fails
     const endTime = Date.now();
     return {
       id: `chunk-fb-${Date.now()}`,
       speakerId,
       speakerName,
-      originalText: text,
-      translatedText: sourceLang === targetLang ? text : `[${targetLang.toUpperCase()}] ${text}`,
+      originalText: text || originalText || '',
+      translatedText: sourceLang === targetLang ? (text || originalText || '') : `[${targetLang.toUpperCase()}] ${text || originalText || ''}`,
       sourceLang,
       targetLang,
       timestamp: new Date().toISOString(),
       metrics: {
-        sttLatencyMs: 100,
-        nmtLatencyMs: 150,
-        ttsLatencyMs: 150,
         totalLatencyMs: endTime - startTime,
-        engine: 'Fallback Engine (AI Service Unreachable)'
+        engine: 'Fallback Engine (API Error)'
       }
     };
   }

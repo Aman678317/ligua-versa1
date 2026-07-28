@@ -1,5 +1,5 @@
 import React from 'react';
-import { Video, Sparkles, BarChart2, BookOpen, Globe, UserCheck, ShieldCheck, Sliders, LogIn, Ghost } from 'lucide-react';
+import { Video, Sparkles, BarChart2, BookOpen, Globe, UserCheck, ShieldCheck, Sliders, LogIn } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, currentUser, selectedLanguage, setSelectedLanguage, languages, onOpenAuth }) {
   return (
@@ -62,18 +62,6 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, selectedL
           >
             <BarChart2 className="w-4 h-4" />
             Telemetry
-          </button>
-
-          <button
-            onClick={() => setActiveTab('whispers')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              activeTab === 'whispers'
-                ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Ghost className="w-4 h-4" />
-            Whispers
           </button>
 
           <button
