@@ -1,9 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Link2, Calendar, ShieldCheck } from 'lucide-react';
+
+const SlideIcon1 = () => (
+  <div className="relative w-full h-full flex items-center justify-center">
+    <div className="absolute w-48 h-48 bg-cyan-500/20 rounded-full blur-3xl animate-pulse"></div>
+    <div className="w-40 h-40 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center shadow-2xl z-10 relative">
+      <Link2 className="w-20 h-20 text-[#00E5C7]" />
+      <div className="absolute -top-2 -right-2 w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center shadow-[0_0_15px_rgba(99,102,241,0.8)] border-2 border-slate-900">
+        <div className="w-3 h-3 bg-white rounded-full animate-ping"></div>
+      </div>
+      <div className="absolute -bottom-2 -left-2 w-8 h-8 rounded-full bg-[#00E5C7] flex items-center justify-center shadow-[0_0_15px_rgba(0,229,199,0.8)] border-2 border-slate-900"></div>
+    </div>
+  </div>
+);
+
+const SlideIcon2 = () => (
+  <div className="relative w-full h-full flex items-center justify-center">
+    <div className="absolute w-48 h-48 bg-indigo-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+    <div className="w-40 h-40 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center shadow-2xl z-10 relative">
+      <Calendar className="w-20 h-20 text-indigo-400" />
+      <div className="absolute -bottom-2 -left-2 w-12 h-12 rounded-2xl bg-rose-500 flex items-center justify-center shadow-[0_0_15px_rgba(244,63,94,0.8)] border-2 border-slate-900 transform -rotate-12">
+        <span className="text-white font-bold text-sm">24</span>
+      </div>
+    </div>
+  </div>
+);
+
+const SlideIcon3 = () => (
+  <div className="relative w-full h-full flex items-center justify-center">
+    <div className="absolute w-48 h-48 bg-emerald-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+    <div className="w-40 h-40 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center shadow-2xl z-10 relative">
+      <ShieldCheck className="w-20 h-20 text-emerald-400" />
+      <div className="absolute inset-0 rounded-full border-[3px] border-emerald-500/20 animate-[spin_6s_linear_infinite] border-t-emerald-400"></div>
+      <div className="absolute inset-[-10px] rounded-full border-[2px] border-emerald-500/10 animate-[spin_4s_linear_infinite_reverse] border-b-emerald-300"></div>
+    </div>
+  </div>
+);
 
 const slides = [
   {
-    image: 'https://www.gstatic.com/meet/user_edu_get_a_link_light_90698cd7b4ca04d3005c962a3756c42d.svg',
+    icon: <SlideIcon1 />,
     title: 'Get a link that you can share',
     description: (
       <>
@@ -12,7 +48,7 @@ const slides = [
     )
   },
   {
-    image: 'https://www.gstatic.com/meet/user_edu_scheduling_light_b352efa017e4f8f1ffda43e847820322.svg',
+    icon: <SlideIcon2 />,
     title: 'Plan ahead',
     description: (
       <>
@@ -21,9 +57,9 @@ const slides = [
     )
   },
   {
-    image: 'https://www.gstatic.com/meet/user_edu_safety_light_e04a2bbb449524ef7e49ea36d5f25b65.svg',
+    icon: <SlideIcon3 />,
     title: 'Your meeting is safe',
-    description: 'No one can join a meeting unless invited or admitted by the host'
+    description: 'No one can join a meeting unless invited or admitted by the host. LinguaVersa uses secure WebRTC encryption.'
   }
 ];
 
@@ -33,7 +69,7 @@ export default function LandingCarousel() {
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % slides.length);
-    }, 5000);
+    }, 6000); // Slower transition to admire animations
     return () => clearInterval(timer);
   }, []);
 
@@ -70,26 +106,21 @@ export default function LandingCarousel() {
         {slides.map((slide, index) => (
           <div 
             key={index}
-            className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 ease-in-out ${
+            className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-700 ease-in-out ${
               index === currentIndex 
-                ? 'opacity-100 translate-x-0 pointer-events-auto' 
+                ? 'opacity-100 translate-x-0 pointer-events-auto scale-100' 
                 : index < currentIndex 
-                  ? 'opacity-0 -translate-x-full pointer-events-none' 
-                  : 'opacity-0 translate-x-full pointer-events-none'
+                  ? 'opacity-0 -translate-x-full pointer-events-none scale-95' 
+                  : 'opacity-0 translate-x-full pointer-events-none scale-95'
             }`}
           >
             <div className="w-64 h-64 mb-6 flex items-center justify-center">
-              <img 
-                src={slide.image} 
-                alt={slide.title} 
-                className="w-full h-full object-contain pointer-events-none" 
-                draggable="false"
-              />
+              {slide.icon}
             </div>
-            <h2 className="text-2xl font-normal text-white mb-3">
+            <h2 className="text-2xl font-bold text-white mb-3 tracking-tight">
               {slide.title}
             </h2>
-            <p className="text-[15px] text-slate-300 max-w-sm font-light leading-relaxed">
+            <p className="text-[15px] text-slate-300 max-w-sm font-medium leading-relaxed">
               {slide.description}
             </p>
           </div>
@@ -103,7 +134,7 @@ export default function LandingCarousel() {
             key={index}
             onClick={() => setCurrentIndex(index)}
             className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-              index === currentIndex ? 'bg-[#00E5C7] scale-125' : 'bg-slate-600 hover:bg-slate-500'
+              index === currentIndex ? 'bg-[#00E5C7] scale-150 w-4' : 'bg-slate-600 hover:bg-slate-500'
             }`}
             aria-label={`Go to slide ${index + 1}`}
           />
