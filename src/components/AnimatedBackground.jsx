@@ -9,8 +9,8 @@ const AnimatedBackground = () => {
     let attempts = 0;
     
     const initVanta = () => {
-      if (myRef.current && window.VANTA && window.VANTA.NET) {
-        effect = window.VANTA.NET({
+      if (myRef.current && window.VANTA && window.VANTA.GLOBE) {
+        effect = window.VANTA.GLOBE({
           el: myRef.current,
           mouseControls: true,
           touchControls: true,
@@ -19,8 +19,9 @@ const AnimatedBackground = () => {
           minWidth: 200.00,
           scale: 1.00,
           scaleMobile: 1.00,
-          color: 0x876387,
-          backgroundColor: 0x5051e,
+          color: 0x41369d,
+          color2: 0x5890b3,
+          size: 1.50,
           THREE: window.THREE // Pass THREE explicitly just in case
         });
         setVantaEffect(effect);
